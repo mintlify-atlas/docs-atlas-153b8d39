@@ -1,122 +1,146 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Manifest",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#3ccfb1",
+    "light": "#293581",
+    "dark": "#ece4db"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/mnfst/manifest"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/mnfst/manifest",
+      "discord": "https://discord.gg/FepAked3W7"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "installation"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/overview",
+              "concepts/routing",
+              "concepts/observability",
+              "concepts/architecture",
+              "concepts/cloud-vs-local"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Features",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "features/dashboard",
+              "features/cost-tracking",
+              "features/alerts",
+              "features/model-management",
+              "features/routing-config"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Guides",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "guides/openclaw-setup",
+              "guides/local-mode",
+              "guides/cloud-mode",
+              "guides/multi-agent",
+              "guides/custom-providers"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Overview",
             "pages": [
-              "api-reference/introduction"
+              "api/introduction",
+              "api/authentication"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Analytics",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/analytics/overview",
+              "api/analytics/tokens",
+              "api/analytics/costs",
+              "api/analytics/messages"
+            ]
+          },
+          {
+            "group": "Agents",
+            "pages": [
+              "api/agents/list",
+              "api/agents/create",
+              "api/agents/get-key",
+              "api/agents/rotate-key",
+              "api/agents/delete"
+            ]
+          },
+          {
+            "group": "Routing",
+            "pages": [
+              "api/routing/config",
+              "api/routing/resolve",
+              "api/routing/proxy"
+            ]
+          },
+          {
+            "group": "OTLP",
+            "pages": [
+              "api/otlp/traces",
+              "api/otlp/metrics",
+              "api/otlp/logs"
+            ]
+          },
+          {
+            "group": "Notifications",
+            "pages": [
+              "api/notifications/rules",
+              "api/notifications/providers"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Advanced",
+        "groups": [
+          {
+            "group": "Self-Hosting",
+            "pages": [
+              "advanced/self-hosting/overview",
+              "advanced/self-hosting/deployment",
+              "advanced/self-hosting/configuration",
+              "advanced/self-hosting/database"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "advanced/development/setup",
+              "advanced/development/architecture",
+              "advanced/development/testing",
+              "advanced/development/contributing"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

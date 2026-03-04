@@ -1,0 +1,520 @@
+---
+title: Authentication
+description: Authentication methods, security mechanisms, and API key management for the Manifest API
+---
+
+## Overview
+
+Manifest supports three authentication methods, implemented through a guard chain that runs on every request:
+
+1. **Session Authentication** - Cookie-based sessions via Better Auth (for web dashboard)
+2. **API Key Authentication** - X-API-Key header for programmatic access
+3. **Bearer Token Authentication** - Agent API keys for OTLP ingestion and LLM proxy
+
+The API evaluates authentication in this order:
+1. `SessionGuard` - Validates Better Auth session cookies
+2. `ApiKeyGuard` - Falls through if no session, checks X-API-Key header
+3. `OtlpAuthGuard` - Used only for `/otlp/*` and `/v1/chat/completions` endpoints
+
+## Session Authentication
+
+Session authentication uses Better Auth with cookie-based sessions. This is the primary method for the web dashboard.
+
+### How It Works
+
+<Steps>
+  <Step title="Login">
+    User authenticates via email/password or OAuth providers (Google, GitHub, Discord)
+  </Step>
+  <Step title="Session Cookie">
+    Better Auth creates a secure session cookie: `better-auth.session_token`
+  </Step>
+  <Step title="Request Validation">
+    The `SessionGuard` validates the cookie on each request via `auth.api.getSession()`
+  </Step>
+  <Step title="User Context">
+    On success, `request.user` and `request.session` are populated with user data
+  </Step>
+</Steps>
+
+### Session Endpoints
+
+<ResponseField name="GET /api/auth/get-session">
+  Returns the current session and user information
+</ResponseField>
+
+<ResponseField name="POST /api/auth/sign-in/email">
+  Sign in with email and password
+</ResponseField>
+
+<ResponseField name="POST /api/auth/sign-up/email">
+  Register a new account with email and password
+</ResponseField>
+
+<ResponseField name="POST /api/auth/sign-out">
+  Sign out and invalidate the session
+</ResponseField>
+
+<ResponseField name="GET /api/auth/sign-in/{provider}">
+  Initiate OAuth flow (google, github, discord)
+</ResponseField>
+
+### Session Response
+
+```json
+{
+  "session": {
+    "id": "session-abc123",
+    "userId": "user-456",
+    "token": "session-token-xyz",
+    "expiresAt": "2024-12-31T23:59:59Z",
+    "createdAt": "2024-03-15T10:30:00Z",
+    "updatedAt": "2024-03-15T10:30:00Z"
+  },
+  "user": {
+    "id": "user-456",
+    "name": "John Doe",
+    "email": "john@example.com",
+    "emailVerified": true,
+    "image": null,
+    "createdAt": "2024-03-01T08:00:00Z",
+    "updatedAt": "2024-03-15T10:30:00Z"
+  }
+}
+```
+
+### Example Request
+
+```bash cURL
+curl -X GET 'https://your-domain.com/api/v1/overview?range=24h' \
+  -H 'Cookie: better-auth.session_token=your-session-token' \
+  -H 'Content-Type: application/json'
+```
+
+```javascript Fetch (Browser)
+// Cookies are automatically included with credentials: 'include'
+const response = await fetch('https://your-domain.com/api/v1/overview?range=24h', {
+  method: 'GET',
+  credentials: 'include', // Important: sends cookies
+  headers: {
+    'Content-Type': 'application/json'
+  }
+});
+
+const data = await response.json();
+```
+
+## API Key Authentication
+
+API key authentication provides programmatic access to analytics and management endpoints using the `X-API-Key` header.
+
+### Types of API Keys
+
+Manifest supports two types of API keys:
+
+<CardGroup cols={2}>
+  <Card title="Database API Keys" icon="database">
+    Multi-tenant keys stored in the `api_keys` table. Each key is associated with a `user_id` for data isolation. Keys are hashed using scrypt KDF and compared with timing-safe equality.
+  </Card>
+  <Card title="Environment API Key" icon="server">
+    Single shared key from the `API_KEY` environment variable. Used for simple single-tenant setups. Falls back after database lookup fails.
+  </Card>
+</CardGroup>
+
+### How It Works
+
+<Steps>
+  <Step title="Header Check">
+    The `ApiKeyGuard` checks for the `X-API-Key` header
+  </Step>
+  <Step title="Database Lookup">
+    Key is hashed and compared against `api_keys.key_hash` using timing-safe comparison
+  </Step>
+  <Step title="Fallback">
+    If not found, compares against `API_KEY` environment variable
+  </Step>
+  <Step title="Context">
+    On success, `request.apiKeyUserId` is set to the associated user ID for tenant filtering
+  </Step>
+  <Step title="Usage Tracking">
+    `last_used_at` timestamp is updated asynchronously
+  </Step>
+</Steps>
+
+### Creating API Keys
+
+API keys are created through the dashboard or by setting the `API_KEY` environment variable.
+
+<CodeGroup>
+```bash Environment Variable
+# In packages/backend/.env
+API_KEY=your-secret-api-key-here
+```
+
+```bash Database Key
+# Created via dashboard - automatically hashed and stored
+# Format: any string (no specific prefix required)
+```
+</CodeGroup>
+
+### Example Request
+
+```bash cURL
+curl -X GET 'https://your-domain.com/api/v1/agents' \
+  -H 'X-API-Key: your-api-key' \
+  -H 'Content-Type: application/json'
+```
+
+```javascript Fetch
+const response = await fetch('https://your-domain.com/api/v1/agents', {
+  method: 'GET',
+  headers: {
+    'X-API-Key': 'your-api-key',
+    'Content-Type': 'application/json'
+  }
+});
+
+const agents = await response.json();
+```
+
+```python Python
+import requests
+
+url = 'https://your-domain.com/api/v1/agents'
+headers = {
+    'X-API-Key': 'your-api-key',
+    'Content-Type': 'application/json'
+}
+
+response = requests.get(url, headers=headers)
+agents = response.json()
+```
+
+### Security Features
+
+<ParamField path="Timing-Safe Comparison" type="security">
+  API keys are compared using `timingSafeEqual()` to prevent timing attacks. Buffers are padded to the same length before comparison.
+</ParamField>
+
+<ParamField path="Key Hashing" type="security">
+  Database API keys are hashed using scrypt KDF with the following parameters:
+  - **Cost factor (N)**: 16384
+  - **Block size (r)**: 8
+  - **Parallelization (p)**: 1
+  - **Key length**: 32 bytes
+  - **Salt**: Derived from the key itself
+</ParamField>
+
+## Bearer Token Authentication
+
+Bearer token authentication is used exclusively for OTLP ingestion and the LLM routing proxy. Tokens are agent-specific API keys with the `mnfst_` prefix.
+
+### Agent API Keys
+
+Agent API keys are generated when creating an agent and stored in the `agent_api_keys` table.
+
+<ParamField path="Format" type="string">
+  `mnfst_` followed by a cryptographically secure random string
+</ParamField>
+
+<ParamField path="Storage" type="security">
+  Keys are hashed using scrypt KDF. The plaintext key is only shown once during creation.
+</ParamField>
+
+<ParamField path="Scope" type="tenant">
+  Each key is scoped to a specific tenant, agent, and user for strict data isolation.
+</ParamField>
+
+<ParamField path="Caching" type="performance">
+  Valid keys are cached in-memory for 5 minutes (300 seconds) to reduce database load.
+</ParamField>
+
+### How It Works
+
+<Steps>
+  <Step title="Header Check">
+    The `OtlpAuthGuard` extracts the token from the `Authorization: Bearer {token}` header
+  </Step>
+  <Step title="Prefix Validation">
+    Validates the token starts with `mnfst_` (unless in local mode with loopback IP)
+  </Step>
+  <Step title="Cache Lookup">
+    Checks the in-memory cache for recently validated tokens
+  </Step>
+  <Step title="Database Lookup">
+    If not cached, queries `agent_api_keys` table with key hash, includes joins to `agents` and `tenants` tables
+  </Step>
+  <Step title="Expiration Check">
+    Validates `expires_at` if set (most keys have no expiration)
+  </Step>
+  <Step title="Context Injection">
+    On success, `request.ingestionContext` is populated with tenant, agent, and user IDs
+  </Step>
+</Steps>
+
+### Ingestion Context
+
+Successful authentication populates the ingestion context:
+
+```typescript
+interface IngestionContext {
+  tenantId: string;   // Tenant UUID
+  agentId: string;    // Agent UUID
+  agentName: string;  // Agent display name
+  userId: string;     // User ID (tenant.name)
+}
+```
+
+### Example Request
+
+```bash OTLP Traces
+curl -X POST 'https://your-domain.com/otlp/v1/traces' \
+  -H 'Authorization: Bearer mnfst_your-agent-key-here' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "resourceSpans": [
+      {
+        "resource": {
+          "attributes": [
+            {"key": "service.name", "value": {"stringValue": "my-agent"}}
+          ]
+        },
+        "scopeSpans": [...]
+      }
+    ]
+  }'
+```
+
+```bash LLM Proxy
+curl -X POST 'https://your-domain.com/v1/chat/completions' \
+  -H 'Authorization: Bearer mnfst_your-agent-key-here' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "gpt-4",
+    "messages": [
+      {"role": "user", "content": "Hello!"}
+    ]
+  }'
+```
+
+```javascript Node.js
+const response = await fetch('https://your-domain.com/otlp/v1/traces', {
+  method: 'POST',
+  headers: {
+    'Authorization': 'Bearer mnfst_your-agent-key-here',
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    resourceSpans: [/* ... */]
+  })
+});
+```
+
+### Managing Agent Keys
+
+<ResponseField name="GET /api/v1/agents/:name/key">
+  Retrieve the current agent API key (returns prefix only, not full key)
+</ResponseField>
+
+<ResponseField name="POST /api/v1/agents/:name/rotate-key">
+  Rotate the agent API key. Returns the new plaintext key (only time it's shown).
+</ResponseField>
+
+<Warning>
+  Agent API keys are only shown in full once during creation or rotation. The dashboard only displays the key prefix (`mnfst_abc...`) after that. Store keys securely.
+</Warning>
+
+## Local Mode Authentication
+
+In local mode (`MANIFEST_MODE=local`), authentication is simplified for single-user development:
+
+<ParamField path="Session Auth" type="local">
+  Better Auth is disabled. The `LocalAuthGuard` trusts all requests from loopback IPs (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`) and injects a static local user.
+</ParamField>
+
+<ParamField path="OTLP Auth" type="local">
+  The `OtlpAuthGuard` bypasses Bearer token validation for loopback connections. Accepts any token (including dev-mode dummy tokens like `Bearer dev-no-auth`).
+</ParamField>
+
+<ParamField path="Local User" type="constants">
+  ```typescript
+  {
+    id: 'local-user-00000000-0000-0000-0000-000000000001',
+    name: 'Local User',
+    email: 'local@manifest.local'
+  }
+  ```
+</ParamField>
+
+### Local Session Endpoint
+
+```bash Request
+curl http://127.0.0.1:3001/api/auth/get-session
+```
+
+```json Response
+{
+  "session": {
+    "id": "local-session",
+    "userId": "local-user-00000000-0000-0000-0000-000000000001",
+    "token": "local-token",
+    "expiresAt": "2025-03-15T10:30:00Z",
+    "createdAt": "2024-03-15T10:30:00Z",
+    "updatedAt": "2024-03-15T10:30:00Z"
+  },
+  "user": {
+    "id": "local-user-00000000-0000-0000-0000-000000000001",
+    "name": "Local User",
+    "email": "local@manifest.local",
+    "emailVerified": true,
+    "image": null,
+    "createdAt": "2024-03-15T10:30:00Z",
+    "updatedAt": "2024-03-15T10:30:00Z"
+  }
+}
+```
+
+## Public Endpoints
+
+Some endpoints skip authentication using the `@Public()` decorator:
+
+<ResponseField name="GET /api/v1/health">
+  Health check endpoint
+</ResponseField>
+
+<ResponseField name="GET /api/v1/github/stars">
+  GitHub star count (public badge endpoint)
+</ResponseField>
+
+<ResponseField name="ALL /api/auth/*">
+  Better Auth endpoints (login, register, OAuth callbacks)
+</ResponseField>
+
+## Error Responses
+
+### Missing Authentication
+
+```json X-API-Key Required
+{
+  "statusCode": 401,
+  "message": "X-API-Key header required",
+  "error": "Unauthorized"
+}
+```
+
+```json Bearer Token Required
+{
+  "statusCode": 401,
+  "message": "Authorization header required",
+  "error": "Unauthorized"
+}
+```
+
+### Invalid Credentials
+
+```json Invalid API Key
+{
+  "statusCode": 401,
+  "message": "Invalid API key",
+  "error": "Unauthorized"
+}
+```
+
+```json Expired Key
+{
+  "statusCode": 401,
+  "message": "API key expired",
+  "error": "Unauthorized"
+}
+```
+
+### Forbidden Access
+
+```json Local Mode (Non-Loopback)
+{
+  "statusCode": 403,
+  "message": "Forbidden",
+  "error": "Forbidden"
+}
+```
+
+## Security Best Practices
+
+<Steps>
+  <Step title="Secure Storage">
+    Never commit API keys or agent tokens to version control. Use environment variables or secure secret management.
+  </Step>
+  <Step title="HTTPS Only">
+    Always use HTTPS in production. Sessions and API keys are transmitted in headers.
+  </Step>
+  <Step title="Key Rotation">
+    Rotate agent API keys regularly, especially after team member changes or suspected exposure.
+  </Step>
+  <Step title="Least Privilege">
+    In multi-tenant setups, create separate API keys per service or application for easier revocation and auditing.
+  </Step>
+  <Step title="Monitor Usage">
+    Check `last_used_at` timestamps on API keys to identify unused or compromised keys.
+  </Step>
+</Steps>
+
+## Environment Variables
+
+Authentication-related environment variables:
+
+<ParamField path="BETTER_AUTH_SECRET" type="string" required>
+  Secret for Better Auth session signing. Must be at least 32 characters. Generate with: `openssl rand -hex 32`
+</ParamField>
+
+<ParamField path="BETTER_AUTH_URL" type="string">
+  Base URL for Better Auth callbacks. Defaults to `http://localhost:{PORT}`
+</ParamField>
+
+<ParamField path="API_KEY" type="string">
+  Shared API key for programmatic access (fallback if database key not found)
+</ParamField>
+
+<ParamField path="MANIFEST_MODE" type="string">
+  Set to `local` to enable local mode authentication (loopback bypass)
+</ParamField>
+
+<ParamField path="GOOGLE_CLIENT_ID" type="string">
+  Google OAuth client ID (optional, enables Google sign-in)
+</ParamField>
+
+<ParamField path="GOOGLE_CLIENT_SECRET" type="string">
+  Google OAuth client secret (required if client ID is set)
+</ParamField>
+
+<ParamField path="GITHUB_CLIENT_ID" type="string">
+  GitHub OAuth client ID (optional, enables GitHub sign-in)
+</ParamField>
+
+<ParamField path="GITHUB_CLIENT_SECRET" type="string">
+  GitHub OAuth client secret (required if client ID is set)
+</ParamField>
+
+<ParamField path="DISCORD_CLIENT_ID" type="string">
+  Discord OAuth client ID (optional, enables Discord sign-in)
+</ParamField>
+
+<ParamField path="DISCORD_CLIENT_SECRET" type="string">
+  Discord OAuth client secret (required if client ID is set)
+</ParamField>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="API Overview" icon="book" href="/api/introduction">
+    Return to API introduction and base concepts
+  </Card>
+  <Card title="Agent Management" icon="robot" href="/api/agents/list">
+    Create and manage agents with API keys
+  </Card>
+  <Card title="OTLP Ingestion" icon="upload" href="/api/otlp/traces">
+    Send telemetry data using agent API keys
+  </Card>
+  <Card title="LLM Routing" icon="route" href="/api/routing/proxy">
+    Use the LLM proxy with Bearer authentication
+  </Card>
+</CardGroup>

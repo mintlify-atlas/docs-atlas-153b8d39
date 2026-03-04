@@ -1,0 +1,321 @@
+---
+title: Cost Tracking
+description: Track LLM spending with per-token pricing and real-time cost calculation
+---
+
+Manifest automatically calculates costs for every LLM request by combining token counts with model pricing data. Costs are computed at ingestion time and stored in the `agent_messages` table.
+
+## How Cost Calculation Works
+
+When a message is ingested via OTLP or the Telemetry API, Manifest:
+
+1. **Extracts token counts** from the request (input tokens, output tokens, cache tokens)
+2. **Looks up model pricing** from the `model_pricing` table
+3. **Calculates cost** using the formula:
+   ```
+   cost_usd = (input_tokens * input_price_per_token) + (output_tokens * output_price_per_token)
+   ```
+4. **Stores the cost** in the `cost_usd` column of `agent_messages`
+
+### Pricing Database
+
+Model pricing is stored in the `model_pricing` table with per-token rates:
+
+```typescript
+// From packages/backend/src/entities/model-pricing.entity.ts
+{
+  model_name: string,              // e.g., "gpt-4o", "claude-3-5-sonnet-20241022"
+  provider: string,                // e.g., "OpenAI", "Anthropic"
+  input_price_per_token: number,   // Cost per input token (USD)
+  output_price_per_token: number,  // Cost per output token (USD)
+  context_window: number,          // Max context size
+  updated_at: string               // Last sync timestamp
+}
+```
+
+Prices are synced from external sources (e.g., [OpenRouter pricing API](https://openrouter.ai/api/v1/models)) and stored as per-token rates.
+
+### Cost Storage
+
+Computed costs are stored in the `agent_messages` table:
+
+```typescript
+// From packages/backend/src/entities/agent-message.entity.ts
+{
+  id: string,
+  timestamp: string,
+  input_tokens: number,
+  output_tokens: number,
+  cache_read_tokens: number,       // Prompt cache hits
+  cache_creation_tokens: number,   // Prompt cache writes
+  cost_usd: number,                // Computed cost
+  model: string,
+  // ...
+}
+```
+
+## Token Counting
+
+Token counts come from LLM provider responses:
+
+- **OpenAI**: Returns `usage.prompt_tokens` and `usage.completion_tokens`
+- **Anthropic**: Returns `usage.input_tokens` and `usage.output_tokens`
+- **Google**: Returns `usageMetadata.promptTokenCount` and `candidatesTokenCount`
+
+For streaming responses, Manifest accumulates token counts from chunk metadata.
+
+### Cache Token Handling
+
+Anthropic and OpenAI support prompt caching, which affects pricing:
+
+- **Cache read tokens**: Cheaper than input tokens (discounted rate)
+- **Cache creation tokens**: Same as input tokens (writes to cache)
+
+Manifest stores these separately for accurate cost tracking:
+
+```typescript
+// From packages/backend/src/routing/proxy/anthropic-adapter.ts
+if (usage.cache_creation_input_tokens) {
+  metadata.cache_creation_tokens = usage.cache_creation_input_tokens;
+}
+if (usage.cache_read_input_tokens) {
+  metadata.cache_read_tokens = usage.cache_read_input_tokens;
+}
+```
+
+## Cost Aggregation
+
+Costs are aggregated across time ranges for dashboard summaries:
+
+```typescript
+// From packages/backend/src/analytics/services/aggregation.service.ts:79-103
+async getCostSummary(range: string, userId: string, agentName?: string): Promise<MetricWithTrend> {
+  const interval = rangeToInterval(range);
+  const prevInterval = rangeToPreviousInterval(range);
+  const cutoff = computeCutoff(interval);
+  const prevCutoff = computeCutoff(prevInterval);
+
+  const safeCost = sqlSanitizeCost('at.cost_usd');
+  const currentQb = this.turnRepo
+    .createQueryBuilder('at')
+    .select(`COALESCE(SUM(${safeCost}), 0)`, 'total')
+    .where('at.timestamp >= :cutoff', { cutoff });
+  addTenantFilter(currentQb, userId, agentName);
+  const currentRow = await currentQb.getRawOne();
+
+  // Calculate trend vs. previous period
+  const prevQb = this.turnRepo
+    .createQueryBuilder('at')
+    .select(`COALESCE(SUM(${safeCost}), 0)`, 'total')
+    .where('at.timestamp >= :prevCutoff', { prevCutoff })
+    .andWhere('at.timestamp < :cutoff', { cutoff });
+  addTenantFilter(prevQb, userId, agentName);
+  const prevRow = await prevQb.getRawOne();
+
+  const current = Number(currentRow?.total ?? 0);
+  const previous = Number(prevRow?.total ?? 0);
+  return { value: current, trend_pct: computeTrend(current, previous) };
+}
+```
+
+### Timeseries Queries
+
+Cost over time is computed for charts:
+
+```typescript
+// Hourly costs (for 1h, 24h ranges)
+SELECT
+  DATE_TRUNC('hour', timestamp) AS hour,
+  SUM(cost_usd) AS cost
+FROM agent_messages
+WHERE timestamp >= NOW() - INTERVAL '24 hours'
+GROUP BY hour
+ORDER BY hour;
+
+// Daily costs (for 7d, 30d ranges)
+SELECT
+  DATE(timestamp) AS date,
+  SUM(cost_usd) AS cost
+FROM agent_messages
+WHERE timestamp >= NOW() - INTERVAL '7 days'
+GROUP BY date
+ORDER BY date;
+```
+
+## Cost by Model
+
+The dashboard breaks down spending by model:
+
+```typescript
+// From packages/backend/src/analytics/services/timeseries-queries.service.ts
+async getCostByModel(range: string, userId: string, agentName?: string) {
+  const interval = rangeToInterval(range);
+  const cutoff = computeCutoff(interval);
+
+  const qb = this.turnRepo
+    .createQueryBuilder('at')
+    .select('at.model', 'model')
+    .addSelect('SUM(at.input_tokens + at.output_tokens)', 'tokens')
+    .addSelect('SUM(cost_usd)', 'estimated_cost')
+    .where('at.timestamp >= :cutoff', { cutoff })
+    .andWhere('at.model IS NOT NULL')
+    .groupBy('at.model')
+    .orderBy('estimated_cost', 'DESC');
+
+  addTenantFilter(qb, userId, agentName);
+  const rows = await qb.getRawMany();
+
+  const total = rows.reduce((sum, r) => sum + Number(r.estimated_cost), 0);
+
+  return rows.map((r) => ({
+    model: r.model,
+    tokens: Number(r.tokens),
+    estimated_cost: Number(r.estimated_cost),
+    share_pct: total > 0 ? (Number(r.estimated_cost) / total) * 100 : 0,
+  }));
+}
+```
+
+## Model Pricing Updates
+
+Manifest syncs model pricing periodically:
+
+1. **Automatic sync**: Runs on app startup and every 24 hours (configurable)
+2. **Manual sync**: Trigger via `POST /api/v1/model-prices/sync`
+3. **Pricing history**: Old prices are archived in `pricing_history` table
+
+```typescript
+// From packages/backend/src/model-prices/model-prices.service.ts:47-50
+async triggerSync() {
+  const updated = await this.pricingSync.syncPricing();
+  return { updated };
+}
+```
+
+### Pricing Sources
+
+Manifest supports multiple pricing sources:
+
+- **OpenRouter API**: Primary source for major providers (OpenAI, Anthropic, Google, etc.)
+- **Manual overrides**: Add custom pricing for self-hosted models
+- **Ollama models**: Free (zero cost)
+
+## Unresolved Models
+
+When Manifest encounters a model without pricing data, it logs it to `unresolved_models`:
+
+```typescript
+// From packages/backend/src/model-prices/unresolved-model-tracker.service.ts
+async trackUnresolved(modelName: string, provider: string, contextHint?: string) {
+  const existing = await this.ds.query(
+    `SELECT id FROM unresolved_models WHERE model_name = $1`,
+    [modelName]
+  );
+
+  if (existing.length === 0) {
+    await this.ds.query(
+      `INSERT INTO unresolved_models (id, model_name, provider, first_seen, last_seen, occurrence_count, context_hint)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [uuid(), modelName, provider, now, now, 1, contextHint]
+    );
+  } else {
+    await this.ds.query(
+      `UPDATE unresolved_models SET last_seen = $1, occurrence_count = occurrence_count + 1 WHERE model_name = $2`,
+      [now, modelName]
+    );
+  }
+}
+```
+
+View unresolved models at `GET /api/v1/model-prices/unresolved`.
+
+## Cost API Endpoints
+
+### Get Cost Summary
+
+```http
+GET /api/v1/costs?range=7d&agent_name=my-agent
+```
+
+Returns:
+
+```json
+{
+  "summary": {
+    "weekly_cost": {
+      "value": 12.45,
+      "trend_pct": 15.2
+    }
+  },
+  "daily": [
+    { "date": "2024-03-01", "cost": 1.85 },
+    { "date": "2024-03-02", "cost": 2.10 }
+  ],
+  "hourly": [],
+  "by_model": [
+    {
+      "model": "gpt-4o",
+      "tokens": 125000,
+      "share_pct": 65.4,
+      "estimated_cost": 8.14
+    }
+  ]
+}
+```
+
+### Get Model Prices
+
+```http
+GET /api/v1/model-prices
+```
+
+Returns:
+
+```json
+{
+  "models": [
+    {
+      "model_name": "gpt-4o",
+      "provider": "OpenAI",
+      "input_price_per_million": 2.50,
+      "output_price_per_million": 10.00
+    }
+  ],
+  "lastSyncedAt": "2024-03-04T12:00:00Z"
+}
+```
+
+## Handling Missing Pricing
+
+If a model has no pricing data:
+
+1. **Cost is set to 0**: The `cost_usd` field is `0.0`
+2. **Model is tracked**: Added to `unresolved_models` table
+3. **Dashboard shows `—`**: UI displays a dash instead of `$0.00`
+
+```typescript
+// From packages/frontend/src/pages/Overview.tsx:503-506
+<td>
+  {item.cost != null ? (formatCost(item.cost) ?? '—') : '—'}
+</td>
+```
+
+<Warning>
+Costs are estimates based on official provider pricing. Actual bills may differ due to rate limits, retries, or provider-specific billing quirks. Always reconcile with your provider's invoice.
+</Warning>
+
+## Cost Display Precision
+
+Costs are displayed with smart precision:
+
+- **≥ $0.01**: Show 2 decimals (`$1.23`)
+- **< $0.01**: Show full precision on hover (`$0.000045`)
+- **Zero**: Display `—` dash
+
+```typescript
+// From packages/frontend/src/services/formatters.ts
+export function formatCost(cost: number): string | null {
+  if (cost < 0.01) return null;  // Caller shows "—"
+  return `$${cost.toFixed(2)}`;
+}
+```

@@ -1,0 +1,511 @@
+---
+title: 'POST /otlp/v1/logs'
+description: 'Ingest OpenTelemetry logs for debugging and audit trails'
+---
+
+## Overview
+
+The OTLP logs endpoint accepts OpenTelemetry Protocol (OTLP) log data in protobuf or JSON format. Logs capture structured log messages with severity levels, trace context, and custom attributes.
+
+## Endpoint
+
+```
+POST /otlp/v1/logs
+```
+
+## Authentication
+
+<Warning>
+This endpoint requires Bearer token authentication using an Agent API key.
+</Warning>
+
+Include your agent API key in the `Authorization` header:
+
+```bash
+Authorization: Bearer mnfst_your_agent_api_key_here
+```
+
+**How to get an API key:**
+
+1. Create an agent in the Manifest dashboard or via the API
+2. The agent API key is automatically generated with the `mnfst_` prefix
+3. Retrieve it using the [Get Agent Key](/api/agents/get-key) endpoint
+
+### Local Mode Authentication
+
+In local mode (`MANIFEST_MODE=local`), loopback connections (127.0.0.1) bypass authentication. This is useful for development with the OpenClaw plugin in dev mode.
+
+## Content Types
+
+The endpoint accepts two content types:
+
+- **`application/x-protobuf`** (recommended) - Binary protobuf format, more efficient
+- **`application/json`** - JSON format for easier debugging
+
+Set the `Content-Type` header accordingly.
+
+## Request Body
+
+The request body follows the OTLP logs specification. The top-level structure is `ExportLogsServiceRequest`.
+
+### Structure
+
+<CodeGroup>
+
+```json JSON Format
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "my-agent" } },
+          { "key": "agent.name", "value": { "stringValue": "my-agent" } }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {
+            "name": "openclaw-instrumentation",
+            "version": "1.0.0"
+          },
+          "logRecords": [
+            {
+              "timeUnixNano": "1609459200000000000",
+              "observedTimeUnixNano": "1609459200100000000",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "body": {
+                "stringValue": "Agent turn completed successfully"
+              },
+              "attributes": [
+                { "key": "agent.name", "value": { "stringValue": "my-agent" } },
+                { "key": "session.id", "value": { "stringValue": "sess_abc123" } }
+              ],
+              "traceId": "5b8aa5a2d2c872e8321cf37308d69df2",
+              "spanId": "051581bf3cb55c13"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+```typescript TypeScript Interface
+interface OtlpExportLogsServiceRequest {
+  resourceLogs: OtlpResourceLogs[];
+}
+
+interface OtlpResourceLogs {
+  resource: OtlpResource;
+  scopeLogs: OtlpScopeLogs[];
+}
+
+interface OtlpScopeLogs {
+  scope: OtlpInstrumentationScope;
+  logRecords: OtlpLogRecord[];
+}
+
+interface OtlpLogRecord {
+  timeUnixNano: string;              // Log timestamp in nanoseconds
+  observedTimeUnixNano?: string;     // Optional observed timestamp
+  severityNumber?: number;           // Severity level (1-24)
+  severityText?: string;             // Severity text (e.g., "INFO", "ERROR")
+  body?: OtlpAnyValue;               // Log message body
+  attributes?: OtlpKeyValue[];       // Log attributes
+  traceId?: string | Uint8Array;     // Optional trace ID for correlation
+  spanId?: string | Uint8Array;      // Optional span ID for correlation
+}
+
+interface OtlpAnyValue {
+  stringValue?: string;
+  intValue?: string | number;
+  doubleValue?: number;
+  boolValue?: boolean;
+  arrayValue?: { values: OtlpAnyValue[] };
+  kvlistValue?: { values: OtlpKeyValue[] };
+  bytesValue?: string;
+}
+```
+
+</CodeGroup>
+
+### Severity Levels
+
+OTLP defines 24 severity levels. Common levels:
+
+| severityNumber | severityText | Description |
+|----------------|--------------|-------------|
+| 1-4 | TRACE | Trace-level debugging |
+| 5-8 | DEBUG | Debug information |
+| 9-12 | INFO | Informational messages |
+| 13-16 | WARN | Warning messages |
+| 17-20 | ERROR | Error messages |
+| 21-24 | FATAL | Fatal errors |
+
+**Standard mapping:**
+
+- 1 = TRACE
+- 5 = DEBUG
+- 9 = INFO
+- 13 = WARN
+- 17 = ERROR
+- 21 = FATAL
+
+You can provide either `severityNumber` or `severityText` (or both). Manifest uses `severityText` if provided, otherwise maps `severityNumber` to a text level.
+
+### Attributes
+
+#### Resource Attributes
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `service.name` | string | Service identifier (fallback for agent name) |
+| `agent.name` | string | Agent name (overrides service.name) |
+
+#### Log Record Attributes
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `agent.name` | string | Agent name (overrides resource attribute) |
+
+Any additional attributes are stored as JSON in the `attributes` column.
+
+### Body Types
+
+The `body` field can contain:
+
+- **String** - Simple log message
+- **Object** - Structured log data (stored as JSON)
+- **Other types** - Converted to JSON string
+
+## Response
+
+<ResponseField name="partialSuccess" type="object" required>
+  Partial success information (omitted if all log records accepted)
+  
+  <Expandable title="properties">
+    <ResponseField name="rejectedLogRecords" type="number">
+      Number of rejected log records (0 if all accepted)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseExample>
+```json 200 - Success
+{
+  "partialSuccess": {}
+}
+```
+
+```json 401 - Unauthorized
+{
+  "statusCode": 401,
+  "message": "Invalid API key"
+}
+```
+</ResponseExample>
+
+## Examples
+
+### cURL with JSON
+
+```bash
+curl -X POST https://manifest.build/otlp/v1/logs \
+  -H "Authorization: Bearer mnfst_your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resourceLogs": [{
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "my-agent" } }
+        ]
+      },
+      "scopeLogs": [{
+        "scope": { "name": "my-instrumentation" },
+        "logRecords": [
+          {
+            "timeUnixNano": "1609459200000000000",
+            "severityText": "INFO",
+            "body": { "stringValue": "Agent processing request" },
+            "attributes": [
+              { "key": "user.id", "value": { "stringValue": "user_123" } }
+            ]
+          },
+          {
+            "timeUnixNano": "1609459201000000000",
+            "severityText": "ERROR",
+            "body": { "stringValue": "Failed to connect to LLM provider" },
+            "traceId": "5b8aa5a2d2c872e8321cf37308d69df2",
+            "spanId": "051581bf3cb55c13"
+          }
+        ]
+      }]
+    }]
+  }'
+```
+
+### OpenTelemetry SDK (Node.js)
+
+```javascript
+import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
+import { LoggerProvider, BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
+import { Resource } from '@opentelemetry/resources';
+import { SeverityNumber } from '@opentelemetry/api-logs';
+
+const exporter = new OTLPLogExporter({
+  url: 'https://manifest.build/otlp/v1/logs',
+  headers: {
+    'Authorization': 'Bearer mnfst_your_api_key'
+  }
+});
+
+const loggerProvider = new LoggerProvider({
+  resource: Resource.default().merge(new Resource({
+    'service.name': 'my-agent',
+    'agent.name': 'my-agent'
+  }))
+});
+
+loggerProvider.addLogRecordProcessor(new BatchLogRecordProcessor(exporter));
+
+const logger = loggerProvider.getLogger('my-instrumentation');
+
+// Emit logs
+logger.emit({
+  severityNumber: SeverityNumber.INFO,
+  severityText: 'INFO',
+  body: 'Agent turn completed successfully',
+  attributes: {
+    'session.id': 'sess_abc123',
+    'duration_ms': 1500
+  }
+});
+
+logger.emit({
+  severityNumber: SeverityNumber.ERROR,
+  severityText: 'ERROR',
+  body: 'Failed to parse response',
+  attributes: {
+    'error.type': 'ParseError'
+  }
+});
+```
+
+### Structured Logs
+
+```bash
+curl -X POST https://manifest.build/otlp/v1/logs \
+  -H "Authorization: Bearer mnfst_your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resourceLogs": [{
+      "resource": {
+        "attributes": [
+          { "key": "agent.name", "value": { "stringValue": "my-agent" } }
+        ]
+      },
+      "scopeLogs": [{
+        "scope": { "name": "my-app" },
+        "logRecords": [{
+          "timeUnixNano": "1609459200000000000",
+          "severityNumber": 17,
+          "body": {
+            "kvlistValue": {
+              "values": [
+                { "key": "message", "value": { "stringValue": "API call failed" } },
+                { "key": "status_code", "value": { "intValue": 500 } },
+                { "key": "retry_count", "value": { "intValue": 3 } }
+              ]
+            }
+          }
+        }]
+      }]
+    }]
+  }'
+```
+
+## Protobuf Format
+
+When using `application/x-protobuf`, the request body must be a binary-encoded protobuf message following the OTLP logs specification.
+
+**Protobuf message definition:**
+
+```protobuf
+message ExportLogsServiceRequest {
+  repeated ResourceLogs resource_logs = 1;
+}
+
+message ResourceLogs {
+  Resource resource = 1;
+  repeated ScopeLogs scope_logs = 2;
+}
+
+message ScopeLogs {
+  InstrumentationScope scope = 1;
+  repeated LogRecord log_records = 2;
+}
+
+message LogRecord {
+  fixed64 time_unix_nano = 1;
+  fixed64 observed_time_unix_nano = 11;
+  SeverityNumber severity_number = 2;
+  string severity_text = 3;
+  AnyValue body = 5;
+  repeated KeyValue attributes = 6;
+  uint32 dropped_attributes_count = 7;
+  bytes trace_id = 8;              // 16 bytes
+  bytes span_id = 9;               // 8 bytes
+}
+
+enum SeverityNumber {
+  SEVERITY_NUMBER_UNSPECIFIED = 0;
+  SEVERITY_NUMBER_TRACE = 1;
+  SEVERITY_NUMBER_TRACE2 = 2;
+  SEVERITY_NUMBER_TRACE3 = 3;
+  SEVERITY_NUMBER_TRACE4 = 4;
+  SEVERITY_NUMBER_DEBUG = 5;
+  SEVERITY_NUMBER_DEBUG2 = 6;
+  SEVERITY_NUMBER_DEBUG3 = 7;
+  SEVERITY_NUMBER_DEBUG4 = 8;
+  SEVERITY_NUMBER_INFO = 9;
+  SEVERITY_NUMBER_INFO2 = 10;
+  SEVERITY_NUMBER_INFO3 = 11;
+  SEVERITY_NUMBER_INFO4 = 12;
+  SEVERITY_NUMBER_WARN = 13;
+  SEVERITY_NUMBER_WARN2 = 14;
+  SEVERITY_NUMBER_WARN3 = 15;
+  SEVERITY_NUMBER_WARN4 = 16;
+  SEVERITY_NUMBER_ERROR = 17;
+  SEVERITY_NUMBER_ERROR2 = 18;
+  SEVERITY_NUMBER_ERROR3 = 19;
+  SEVERITY_NUMBER_ERROR4 = 20;
+  SEVERITY_NUMBER_FATAL = 21;
+  SEVERITY_NUMBER_FATAL2 = 22;
+  SEVERITY_NUMBER_FATAL3 = 23;
+  SEVERITY_NUMBER_FATAL4 = 24;
+}
+```
+
+See the [OpenTelemetry Protocol Specification](https://opentelemetry.io/docs/specs/otlp/) for the complete protobuf schema.
+
+## Data Processing
+
+When logs are ingested, Manifest:
+
+1. **Decodes** the protobuf or JSON payload
+2. **Extracts** log records with severity, body, and attributes
+3. **Correlates** logs with traces using `traceId` and `spanId` (if provided)
+4. **Stores** logs in the `agent_logs` table
+5. **Emits** real-time events to connected dashboard clients via SSE
+
+### Stored Fields
+
+Each log record is stored with:
+
+- `tenant_id` - Extracted from the authenticated agent API key
+- `agent_id` - Extracted from the authenticated agent API key
+- `agent_name` - From resource or log record attributes
+- `timestamp` - Log timestamp from `timeUnixNano`
+- `severity` - Severity text (e.g., "INFO", "ERROR")
+- `body` - Log message body (string or JSON)
+- `trace_id` - Trace ID for correlation (if provided)
+- `span_id` - Span ID for correlation (if provided)
+- `attributes` - Custom attributes as JSON (if any)
+
+## Trace Correlation
+
+Logs can be correlated with traces by including `traceId` and `spanId`:
+
+```javascript
+// When inside a traced operation
+const span = trace.getActiveSpan();
+const spanContext = span.spanContext();
+
+logger.emit({
+  severityNumber: SeverityNumber.INFO,
+  body: 'Processing request',
+  traceId: spanContext.traceId,
+  spanId: spanContext.spanId
+});
+```
+
+This allows you to:
+
+- View logs in the context of a specific trace
+- Debug issues by following log trails within traces
+- Correlate errors across traces, spans, and logs
+
+## Rate Limiting
+
+OTLP endpoints use in-memory API key caching (5-minute TTL) to minimize database lookups. Each successful authentication is cached for 5 minutes.
+
+## Error Handling
+
+| Status Code | Description |
+|-------------|-------------|
+| 200 | Success (all log records accepted) |
+| 401 | Unauthorized (invalid or expired API key) |
+| 415 | Unsupported Media Type (invalid Content-Type) |
+| 500 | Internal Server Error |
+
+## Use Cases
+
+### Debugging Agent Behavior
+
+Log detailed information during agent execution:
+
+```javascript
+logger.emit({
+  severityNumber: SeverityNumber.DEBUG,
+  body: 'Tool execution started',
+  attributes: {
+    'tool.name': 'web_search',
+    'tool.input': JSON.stringify(input)
+  }
+});
+```
+
+### Error Tracking
+
+Capture errors with context:
+
+```javascript
+try {
+  await executeTool(toolName, input);
+} catch (error) {
+  logger.emit({
+    severityNumber: SeverityNumber.ERROR,
+    body: `Tool execution failed: ${error.message}`,
+    attributes: {
+      'error.type': error.constructor.name,
+      'error.stack': error.stack,
+      'tool.name': toolName
+    }
+  });
+}
+```
+
+### Audit Trails
+
+Log important events for compliance:
+
+```javascript
+logger.emit({
+  severityNumber: SeverityNumber.INFO,
+  body: 'User data accessed',
+  attributes: {
+    'user.id': userId,
+    'access.type': 'read',
+    'data.classification': 'pii'
+  }
+});
+```
+
+## See Also
+
+- [POST /otlp/v1/traces](/api/otlp/traces) - Ingest traces
+- [POST /otlp/v1/metrics](/api/otlp/metrics) - Ingest metrics
+- [OpenClaw Setup Guide](/guides/openclaw-setup) - Configure the OpenClaw plugin
+- [Observability Concepts](/concepts/observability) - Learn about observability in Manifest

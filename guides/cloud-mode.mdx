@@ -1,0 +1,380 @@
+---
+title: Cloud Mode
+description: Connect to Manifest Cloud for team collaboration and managed infrastructure
+---
+
+Cloud mode connects your OpenClaw gateway to Manifest Cloud, giving you a managed backend, team collaboration, and persistent data storage.
+
+## When to Use Cloud Mode
+
+Choose cloud mode if you need:
+
+- **Team collaboration** — Multiple developers viewing the same dashboards
+- **Persistent data** — Keep message logs and analytics across machines
+- **Centralized management** — One place to configure all your agents
+- **Authentication** — User accounts with email/password or OAuth (Google, GitHub, Discord)
+- **Production deployments** — Reliable infrastructure with uptime SLA
+
+For individual local development, [local mode](/guides/local-mode) is simpler.
+
+## Setup
+
+<Steps>
+  <Step title="Create an account">
+    Go to [app.manifest.build](https://app.manifest.build) and sign up:
+    
+    - **Email/password** — Standard registration with email verification
+    - **OAuth** — Sign in with Google, GitHub, or Discord
+    
+    After signing up, you'll be redirected to the workspace page.
+  </Step>
+
+  <Step title="Create an agent">
+    Click **+ New Agent** and give it a name (e.g., `my-openclaw-agent`).
+    
+    Each agent has:
+    - Unique API key for OTLP telemetry ingestion
+    - Separate message log and analytics
+    - Independent routing configuration
+  </Step>
+
+  <Step title="Get your API key">
+    After creating the agent, click **Settings** → **API Key** to view your key:
+    
+    ```
+    mnfst_a1b2c3d4e5f6g7h8i9j0...
+    ```
+    
+    Copy this key — you'll need it for configuration.
+    
+    <Info>
+      API keys are scoped to a single agent. Create separate agents for different projects or environments.
+    </Info>
+  </Step>
+
+  <Step title="Install the plugin">
+    ```bash
+    openclaw plugins install manifest
+    ```
+  </Step>
+
+  <Step title="Configure cloud mode">
+    ```bash
+    openclaw config set plugins.entries.manifest.config.mode cloud
+    openclaw config set plugins.entries.manifest.config.apiKey mnfst_YOUR_KEY
+    ```
+    
+    Alternatively, set the API key via environment variable:
+    
+    ```bash
+    export MANIFEST_API_KEY=mnfst_YOUR_KEY
+    ```
+    
+    The endpoint defaults to `https://app.manifest.build/otlp` — you don't need to configure it unless self-hosting.
+  </Step>
+
+  <Step title="Restart the gateway">
+    ```bash
+    openclaw gateway restart
+    ```
+    
+    The plugin will connect to Manifest Cloud and start sending telemetry.
+  </Step>
+
+  <Step title="Verify the connection">
+    ```bash
+    /manifest
+    ```
+    
+    Expected output:
+    ```
+    Mode: cloud
+    Endpoint reachable: yes
+    Auth valid: yes
+    Agent: my-openclaw-agent
+    ```
+  </Step>
+</Steps>
+
+## Dashboard Access
+
+Access the dashboard at [app.manifest.build](https://app.manifest.build).
+
+After signing in, you'll see:
+
+- **Workspace** — Grid of all your agents with quick stats
+- **Agent Overview** — Token usage, costs, message count for a specific agent
+- **Message Log** — Real-time stream of all LLM interactions
+- **Routing** — Configure model routing tiers and provider keys
+- **Notifications** — Set up cost and usage alerts
+- **Security** — View security score and anomaly events
+
+## Authentication
+
+Manifest Cloud uses [Better Auth](https://better-auth.dev/) for session management:
+
+### Email/Password
+
+- Sign up with email and password
+- Email verification required (check your inbox)
+- Password reset via email link
+
+### OAuth Providers
+
+Sign in with:
+- **Google** — Google Workspace or personal accounts
+- **GitHub** — Developers and teams
+- **Discord** — Community members
+
+OAuth accounts are linked to your email address. You can sign in with any provider tied to the same email.
+
+### Session Management
+
+- Sessions persist for 30 days
+- Logout is per-device (sessions are stored in cookies)
+- Account settings at **Settings** → **Account**
+
+## API Key Management
+
+Each agent has one API key for OTLP ingestion. To rotate a key:
+
+<Steps>
+  <Step title="Navigate to agent settings">
+    Click the agent in your workspace, then **Settings** → **API Key**.
+  </Step>
+
+  <Step title="Rotate the key">
+    Click **Rotate API Key**. This immediately invalidates the old key and generates a new one.
+    
+    <Warning>
+      Rotating a key will break any OpenClaw gateways using the old key. Update your configuration before rotating.
+    </Warning>
+  </Step>
+
+  <Step title="Update your configuration">
+    ```bash
+    openclaw config set plugins.entries.manifest.config.apiKey mnfst_NEW_KEY
+    openclaw gateway restart
+    ```
+  </Step>
+</Steps>
+
+## Multi-Tenancy
+
+Manifest Cloud is multi-tenant:
+
+```
+User Account
+  └─ Tenant (created automatically)
+       ├─ Agent 1 (API key: mnfst_abc...)
+       ├─ Agent 2 (API key: mnfst_def...)
+       └─ Agent 3 (API key: mnfst_ghi...)
+```
+
+- **Tenant** — Created automatically when you create your first agent. Tenant name matches your user ID.
+- **Agent** — Each agent has a unique API key and isolated telemetry data.
+- **Data isolation** — All queries filter by your user ID. You only see your own agents.
+
+See [Multi-Agent Management](/guides/multi-agent) for organizing agents.
+
+## Endpoint Configuration
+
+The default endpoint is `https://app.manifest.build/otlp`. If you're self-hosting Manifest, change the endpoint:
+
+```bash
+openclaw config set plugins.entries.manifest.config.endpoint https://your-domain.com/otlp
+```
+
+The endpoint must:
+- Start with `https://` (or `http://` for local testing)
+- End with `/otlp` (the OTLP ingestion path)
+- Be publicly accessible from your OpenClaw gateway
+
+## Provider Registration
+
+Cloud mode automatically registers Manifest as a provider in OpenClaw:
+
+```json
+// ~/.openclaw/openclaw.json (auto-updated)
+{
+  "models": {
+    "providers": {
+      "manifest": {
+        "baseUrl": "https://app.manifest.build/v1",
+        "api": "openai-completions",
+        "apiKey": "mnfst_YOUR_KEY",
+        "models": [{"id": "auto", "name": "auto"}]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "models": ["manifest/auto"]
+    }
+  }
+}
+```
+
+This allows OpenClaw to route requests to Manifest's proxy API at `/v1/chat/completions`.
+
+## Using Cloud Mode
+
+Once configured, use Manifest's routing and observability features:
+
+```bash
+# Smart routing
+openclaw chat --model manifest/auto "Explain recursion"
+
+# Check connection status
+/manifest
+```
+
+All telemetry data is sent to Manifest Cloud via OTLP over HTTPS.
+
+## Telemetry Pipeline
+
+The cloud mode telemetry pipeline:
+
+1. **OpenClaw gateway** — Plugin hooks intercept LLM requests
+2. **OpenTelemetry SDK** — Creates traces, spans, and metrics
+3. **OTLP exporter** — Batches telemetry and sends to `https://app.manifest.build/otlp`
+4. **Backend ingestion** — Parses OTLP protobuf, validates API key, stores in PostgreSQL
+5. **Dashboard** — Real-time updates via Server-Sent Events (SSE)
+
+Data is batched every 10-30 seconds. New messages may take a moment to appear in the dashboard.
+
+## Security
+
+### API Key Storage
+
+API keys are stored in:
+- OpenClaw config: `~/.openclaw/openclaw.json` (mode `0600`, readable only by your user)
+- Manifest config: `~/.openclaw/manifest/config.json` (mode `0600`)
+
+Both files are restricted to your user account.
+
+<Warning>
+  Do not commit API keys to version control. Use environment variables in CI/CD pipelines.
+</Warning>
+
+### Transport Security
+
+All communication with Manifest Cloud uses HTTPS. OTLP payloads are sent via `POST` requests with:
+- `Authorization: Bearer mnfst_YOUR_KEY` header
+- `Content-Type: application/x-protobuf` (binary protobuf encoding)
+- TLS 1.2+ encryption
+
+### Authentication Guard
+
+The `OtlpAuthGuard` validates API keys:
+
+1. Extracts `Bearer` token from `Authorization` header
+2. Checks if it starts with `mnfst_` prefix
+3. Hashes the key using scrypt KDF
+4. Looks up the hashed key in the `agent_api_keys` table
+5. Caches valid keys in-memory for 5 minutes
+
+Invalid keys return `401 Unauthorized`.
+
+## Troubleshooting
+
+### Connection failures
+
+Run the connection check:
+
+```bash
+/manifest
+```
+
+Possible errors:
+
+#### "Endpoint not reachable"
+
+- Check your internet connection
+- Verify the endpoint URL is correct
+- Test the endpoint manually:
+  ```bash
+  curl https://app.manifest.build/api/v1/health
+  ```
+
+#### "Auth invalid"
+
+- Verify your API key starts with `mnfst_`
+- Check for typos in the key
+- Confirm the key matches your agent in the dashboard
+- If you rotated the key, update your config:
+  ```bash
+  openclaw config set plugins.entries.manifest.config.apiKey mnfst_NEW_KEY
+  openclaw gateway restart
+  ```
+
+### No telemetry data
+
+If messages don't appear in the dashboard:
+
+1. Verify the plugin is active:
+   ```bash
+   openclaw plugins list
+   ```
+
+2. Check connection status:
+   ```bash
+   /manifest
+   ```
+
+3. Restart the gateway to reset the pipeline:
+   ```bash
+   openclaw gateway restart
+   ```
+
+4. Check for firewall or proxy issues blocking HTTPS to `app.manifest.build`
+
+### 401 Unauthorized errors
+
+The backend rejected your API key. Possible causes:
+
+- Key was rotated (update your config)
+- Key was deleted (create a new agent)
+- Key belongs to a different agent (verify in dashboard)
+
+Regenerate the key:
+
+1. Go to dashboard → Agent → Settings → API Key
+2. Click **Rotate API Key**
+3. Copy the new key
+4. Update your config:
+   ```bash
+   openclaw config set plugins.entries.manifest.config.apiKey mnfst_NEW_KEY
+   openclaw gateway restart
+   ```
+
+## Switching from Local Mode
+
+If you're migrating from local to cloud mode:
+
+<Steps>
+  <Step title="Create a cloud agent">
+    Sign up at [app.manifest.build](https://app.manifest.build) and create an agent.
+  </Step>
+
+  <Step title="Update configuration">
+    ```bash
+    openclaw config set plugins.entries.manifest.config.mode cloud
+    openclaw config set plugins.entries.manifest.config.apiKey mnfst_YOUR_KEY
+    openclaw gateway restart
+    ```
+  </Step>
+</Steps>
+
+Your local SQLite data stays at `~/.openclaw/manifest/` but won't be used. Cloud mode stores data on Manifest's servers.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Multi-Agent" icon="users" href="/guides/multi-agent">
+    Organize and track multiple agents in one workspace
+  </Card>
+  <Card title="Custom Providers" icon="plug" href="/guides/custom-providers">
+    Add your LLM provider API keys for routing
+  </Card>
+</CardGroup>

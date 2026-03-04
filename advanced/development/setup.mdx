@@ -1,0 +1,263 @@
+---
+title: 'Development Setup'
+description: 'Set up your local environment for Manifest development'
+---
+
+## Prerequisites
+
+Before starting development, ensure you have:
+
+- **Node.js** 22.x (LTS)
+- **npm** 10.x
+- **PostgreSQL** 16 (for cloud mode testing)
+
+## Initial Setup
+
+### 1. Clone and Install
+
+```bash
+git clone https://github.com/mnfst/manifest.git
+cd manifest
+npm install
+```
+
+Manifest uses **npm workspaces** and **Turborepo** to manage the monorepo.
+
+### 2. Configure Environment Variables
+
+Copy the example environment file:
+
+```bash
+cp packages/backend/.env.example packages/backend/.env
+```
+
+Edit `packages/backend/.env` with the following minimal configuration:
+
+```env
+PORT=3001
+BIND_ADDRESS=127.0.0.1
+NODE_ENV=development
+BETTER_AUTH_SECRET=<run: openssl rand -hex 32>
+DATABASE_URL=postgresql://myuser:mypassword@localhost:5432/mydatabase
+API_KEY=dev-api-key-12345
+SEED_DATA=true
+```
+
+<Note>
+  Generate a secure `BETTER_AUTH_SECRET` with: `openssl rand -hex 32`
+</Note>
+
+### 3. Set Up PostgreSQL (Optional)
+
+For **local mode** (default for development), PostgreSQL is not required — Manifest uses sql.js (WASM SQLite).
+
+If testing **cloud mode** features, start a PostgreSQL container:
+
+```bash
+docker run -d --name postgres_db \
+  -e POSTGRES_USER=myuser \
+  -e POSTGRES_PASSWORD=mypassword \
+  -e POSTGRES_DB=mydatabase \
+  -p 5432:5432 \
+  postgres:16
+```
+
+<Warning>
+  Always create uniquely-named databases to avoid conflicts between dev instances. Use the pattern `manifest_<context>_<random>` (e.g., `manifest_dev_83712`).
+</Warning>
+
+Create a new database:
+
+```bash
+docker exec postgres_db psql -U myuser -d postgres \
+  -c "CREATE DATABASE manifest_dev_$(shuf -i 10000-99999 -n 1);"
+```
+
+Then update `DATABASE_URL` in your `.env` file accordingly.
+
+## Running the Development Server
+
+<Note>
+  The backend requires the `.env` file to be loaded before import time. Always use `NODE_OPTIONS='-r dotenv/config'` or the commands shown below.
+</Note>
+
+### Start All Services
+
+Open **three terminal windows** and run:
+
+**Terminal 1 — Backend**
+```bash
+cd packages/backend
+NODE_OPTIONS='-r dotenv/config' npx nest start --watch
+```
+
+**Terminal 2 — Frontend**
+```bash
+cd packages/frontend
+npx vite
+```
+
+**Terminal 3 — Plugin (Optional)**
+```bash
+cd packages/openclaw-plugin
+npx tsx watch build.ts
+```
+
+<Info>
+  The root command `npm run dev` starts the frontend and plugin but **NOT** the backend (because the backend script is `start:dev`, not `dev`). Always start the backend separately.
+</Info>
+
+### Access the Application
+
+- **Frontend (dev server)**: http://localhost:3000
+- **Backend API**: http://localhost:3001
+
+The Vite dev server proxies `/api` and `/otlp` requests to the backend automatically.
+
+## Development Modes
+
+### Local Mode (Default)
+
+Local mode uses **sql.js** (WASM SQLite) and skips Better Auth. This is the **primary development target**.
+
+```bash
+MANIFEST_MODE=local NODE_OPTIONS='-r dotenv/config' npx nest start --watch
+```
+
+Benefits:
+- No PostgreSQL required
+- No authentication setup needed
+- Fast startup
+- Auto-login on localhost
+
+### Cloud Mode
+
+Cloud mode uses **PostgreSQL** and **Better Auth** (email/password + OAuth providers).
+
+```bash
+# Ensure DATABASE_URL is set in .env
+NODE_OPTIONS='-r dotenv/config' npx nest start --watch
+```
+
+### Plugin Dev Mode
+
+When testing the **OpenClaw plugin** integration (routing, telemetry, OTLP), use dev mode:
+
+```bash
+# 1. Build and start the backend in local mode
+npm run build
+MANIFEST_MODE=local PORT=38238 BIND_ADDRESS=127.0.0.1 \
+  node -r dotenv/config packages/backend/dist/main.js
+
+# 2. Configure the OpenClaw plugin
+openclaw config set plugins.entries.manifest.config.mode dev
+openclaw config set plugins.entries.manifest.config.endpoint http://localhost:38238/otlp
+
+# 3. Restart the gateway
+openclaw gateway restart
+```
+
+Dev mode uses the **OTLP loopback bypass** — no API key needed. The dashboard shows an orange **Dev** badge when running in this mode.
+
+<Warning>
+  After restarting the backend server, always restart the gateway too (`openclaw gateway restart`). The OTLP pipeline doesn't automatically reconnect.
+</Warning>
+
+## Seeding Development Data
+
+With `SEED_DATA=true` in your `.env`, the app seeds demo data on startup:
+
+- **Admin user**: `admin@manifest.build` / `manifest`
+- **Tenant**: `seed-tenant-001`
+- **Agent**: `demo-agent` with OTLP key `dev-otlp-key-001`
+- **API key**: `dev-api-key-manifest-001`
+- **Security events**: 12 sample events
+- **Model pricing**: 28 models (Anthropic, OpenAI, Google, DeepSeek, etc.)
+
+Seeding is **idempotent** — it checks for existing records before inserting.
+
+Log in with `admin@manifest.build` / `manifest` to access the dashboard.
+
+## Database Migrations
+
+TypeORM migrations run automatically on app startup (`migrationsRun: true`).
+
+### Generate a Migration
+
+After modifying an entity:
+
+```bash
+cd packages/backend
+npm run migration:generate -- src/database/migrations/DescriptiveName
+```
+
+### Other Migration Commands
+
+```bash
+npm run migration:run       # Run pending migrations
+npm run migration:revert    # Revert the last migration
+npm run migration:show      # Show migration status ([X] = applied)
+npm run migration:create -- src/database/migrations/Name  # Create empty migration
+```
+
+<Warning>
+  New migrations must be imported in `database.module.ts` and added to the `migrations` array. Always use unique timestamps.
+</Warning>
+
+## Building for Production
+
+Build all packages:
+
+```bash
+npm run build
+```
+
+This runs Turborepo, which builds:
+1. **Frontend** (Vite → `packages/frontend/dist/`)
+2. **Backend** (NestJS → `packages/backend/dist/`)
+3. **Plugin** (esbuild → `packages/openclaw-plugin/dist/`)
+
+Start the production server:
+
+```bash
+npm start
+# or: node packages/backend/dist/main.js
+```
+
+In production, NestJS serves both the API and the frontend static files from the same port.
+
+## Troubleshooting
+
+### Backend won't start
+
+- Ensure `BETTER_AUTH_SECRET` is set in `.env` (min 32 chars)
+- Check that `NODE_OPTIONS='-r dotenv/config'` is used
+- Verify PostgreSQL is running (if using cloud mode)
+
+### Frontend can't reach API
+
+- Ensure the backend is running on port 3001
+- Check Vite proxy config in `packages/frontend/vite.config.ts`
+
+### Plugin not receiving telemetry
+
+- Restart the gateway: `openclaw gateway restart`
+- Check endpoint URL: `openclaw config get plugins.entries.manifest.config.endpoint`
+- Verify the backend is running and accessible
+- The gateway batches telemetry every 10-30 seconds — wait a moment for data to appear
+
+### OpenClaw plugin in bad state
+
+Reset the plugin configuration:
+
+```bash
+openclaw config set plugins.entries.manifest.config.mode dev
+openclaw config set plugins.entries.manifest.config.endpoint http://localhost:38238/otlp
+openclaw gateway restart
+```
+
+## Next Steps
+
+- Review the [Architecture](/advanced/development/architecture) to understand the codebase structure
+- Read the [Testing Guide](/advanced/development/testing) to learn how to write tests
+- Check the [Contributing Guidelines](/advanced/development/contributing) before submitting PRs

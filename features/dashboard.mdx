@@ -1,0 +1,229 @@
+---
+title: Dashboard
+description: Monitor your agent's costs, tokens, and activity in real-time
+---
+
+The Overview dashboard provides a comprehensive view of your agent's LLM usage, costs, and message history. All metrics update in real-time as your agent makes LLM calls.
+
+## Navigation
+
+Access the dashboard at `/agents/{agentName}/overview`. The page displays:
+
+- Summary cards with cost, token usage, and message counts
+- Interactive time-series charts
+- Recent message activity table
+- Cost breakdown by model
+
+## Summary Cards
+
+The dashboard header shows three key metrics with trend indicators:
+
+### Cost
+
+Total spending for the selected time range. Displayed in USD with two decimal precision. The trend badge shows percentage change compared to the previous period (e.g., if viewing last 24 hours, the trend compares to the prior 24 hours).
+
+```typescript
+// From packages/frontend/src/pages/Overview.tsx:374-380
+cost_today: {
+  value: number      // Total cost in USD
+  trend_pct: number  // Percentage change vs. previous period
+}
+```
+
+### Token Usage
+
+Combined input and output tokens processed. Includes a tooltip explaining tokens as "units of text that AI models process." The summary also tracks input/output token breakdown separately.
+
+```typescript
+// From packages/frontend/src/pages/Overview.tsx:49-53
+tokens_today: {
+  value: number              // Total tokens
+  trend_pct: number          // Percentage change
+  sub_values: {
+    input: number,           // Input tokens
+    output: number           // Output tokens
+  }
+}
+```
+
+### Messages
+
+Total number of LLM requests made during the time range. Each row in the `agent_messages` table represents one message.
+
+## Time Range Selector
+
+Switch between time ranges using the dropdown in the page header:
+
+- **Last hour**: Hourly granularity, ideal for monitoring active agents
+- **Last 24 hours**: Hourly granularity
+- **Last 7 days**: Daily granularity (default)
+- **Last 30 days**: Daily granularity
+
+```typescript
+// From packages/frontend/src/pages/Overview.tsx:158-164
+<Select
+  value={range()}
+  onChange={setRange}
+  options={[
+    { label: 'Last hour', value: '1h' },
+    { label: 'Last 24 hours', value: '24h' },
+    { label: 'Last 7 days', value: '7d' },
+    { label: 'Last 30 days', value: '30d' },
+  ]}
+/>
+```
+
+## Interactive Charts
+
+Click any summary card to switch the chart view. The chart displays the selected metric over time with uPlot-powered visualizations.
+
+### Cost Chart
+
+Displays spending over time with a gradient fill. Y-axis shows dollar amounts with two decimal places. Hover to see exact costs at each time point.
+
+```typescript
+// From packages/frontend/src/components/CostChart.tsx:39
+values: (_u, vals) => vals.map((v) => `$${v.toFixed(2)}`)
+```
+
+### Token Chart
+
+Dual-line chart showing input tokens (solid) and output tokens (dashed) separately. Useful for understanding token distribution patterns.
+
+### Messages Chart
+
+Single-line chart showing message volume over time. Helps identify usage spikes and patterns.
+
+## Recent Activity
+
+The Recent Messages table shows the last 5 messages with key details:
+
+- **Date**: Timestamp formatted with `formatTime()` utility
+- **Message**: First 8 characters of the message ID, with a heartbeat icon for keepalive messages
+- **Cost**: Displays `$0.00` or `—` for messages without cost data. Hover to see full precision for costs under $0.01
+- **Model**: Model name with provider icon and routing tier badge (`simple`, `standard`, `complex`, `reasoning`)
+- **Tokens**: Total tokens (input + output)
+- **Status**: Badge showing `success`, `error`, or `rate_limited` (links to Limits page)
+
+```typescript
+// From packages/frontend/src/pages/Overview.tsx:487-544
+<For each={d().recent_activity?.slice(0, 5) ?? []}>
+  {(item) => (
+    <tr>
+      <td>{formatTime(item.timestamp)}</td>
+      <td>{item.id.slice(0, 8)}</td>
+      <td>{formatCost(item.cost) ?? '—'}</td>
+      <td>
+        {providerIcon} {item.model}
+        {item.routing_tier && <span class="tier-badge">{item.routing_tier}</span>}
+      </td>
+      <td>{formatNumber(item.total_tokens)}</td>
+      <td><span class="status-badge">{formatStatus(item.status)}</span></td>
+    </tr>
+  )}
+</For>
+```
+
+## Cost by Model
+
+Breakdown table showing which models are consuming the most budget:
+
+- **Model**: Model name with provider icon
+- **Tokens**: Total tokens processed
+- **% of total**: Visual progress bar and percentage
+- **Cost**: Estimated cost for this model
+
+```typescript
+// From packages/frontend/src/pages/Overview.tsx:66-71
+cost_by_model: Array<{
+  model: string
+  tokens: number
+  share_pct: number        // Percentage of total cost
+  estimated_cost: number   // Cost in USD
+}>
+```
+
+## API Endpoint
+
+The dashboard fetches data from `GET /api/v1/overview`:
+
+```typescript
+// From packages/backend/src/analytics/controllers/overview.controller.ts:21-62
+@Get('overview')
+async getOverview(@Query() query: RangeQueryDto, @CurrentUser() user: AuthUser) {
+  const range = query.range ?? '24h';
+  const agentName = query.agent_name;
+  const hourly = isHourlyRange(range);
+
+  const [
+    tokenSummary, costSummary, messages, costByModel, recentActivity,
+    hourlyTokens, dailyTokens, hourlyCosts, dailyCosts,
+    hourlyMessages, dailyMessages, activeSkills, hasData,
+  ] = await Promise.all([
+    this.aggregation.getTokenSummary(range, user.id, agentName),
+    this.aggregation.getCostSummary(range, user.id, agentName),
+    this.aggregation.getMessageCount(range, user.id, agentName),
+    this.timeseries.getCostByModel(range, user.id, agentName),
+    this.timeseries.getRecentActivity(range, user.id, 5, agentName),
+    // ... timeseries data
+  ]);
+
+  return {
+    summary: { tokens_today, cost_today, messages },
+    token_usage: hourly ? hourlyTokens : dailyTokens,
+    cost_usage: hourly ? hourlyCosts : dailyCosts,
+    message_usage: hourly ? hourlyMessages : dailyMessages,
+    cost_by_model: costByModel,
+    recent_activity: recentActivity,
+    has_data: hasData,
+  };
+}
+```
+
+## Real-Time Updates
+
+The dashboard uses Server-Sent Events (SSE) to update automatically when new data arrives:
+
+```typescript
+// From packages/frontend/src/pages/Overview.tsx:96-99
+const [data, { refetch }] = createResource(
+  () => ({ range: range(), agentName: params.agentName, _ping: pingCount() }),
+  (p) => getOverview(p.range, p.agentName)
+);
+```
+
+The `pingCount()` signal increments when SSE events are received, triggering automatic refetches.
+
+## Empty State
+
+For new agents without data, the dashboard shows:
+
+1. **Setup modal**: Prompts for agent configuration (dismissible, reopenable via header button)
+2. **Waiting banner**: Indicates data will appear after the first LLM call
+3. **Demo dashboard**: Preview of the UI with placeholder content
+
+```typescript
+// From packages/frontend/src/pages/Overview.tsx:276-279
+<div class="waiting-banner">
+  <p>Waiting for data — your dashboard will populate within seconds of your agent's first LLM call.</p>
+</div>
+```
+
+## Performance
+
+Dashboard data is cached for 30 seconds per user:
+
+```typescript
+// From packages/backend/src/analytics/controllers/overview.controller.ts:10-14
+@UseInterceptors(UserCacheInterceptor)
+@CacheTTL(DASHBOARD_CACHE_TTL_MS)  // 30000ms
+export class OverviewController {
+  // ...
+}
+```
+
+The `UserCacheInterceptor` creates separate cache entries for each user to prevent data leakage.
+
+<Info>
+The dashboard respects multi-tenancy. All queries filter by the authenticated user's tenant ID, ensuring users only see their own data.
+</Info>

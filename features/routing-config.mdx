@@ -1,0 +1,510 @@
+---
+title: Routing Configuration
+description: Configure smart model routing, connect providers, and set tier overrides
+---
+
+Manifest's routing system automatically selects the best model for each request based on complexity. The Routing page lets you connect LLM providers, view auto-assigned models, and override tier assignments.
+
+## How Routing Works
+
+1. **Client sends request** to `/v1/chat/completions` with an OpenAI-compatible payload
+2. **Manifest scores the request** using the routing scorer (analyzes prompt length, tool usage, context complexity, etc.)
+3. **Scorer assigns a tier**: `simple`, `standard`, `complex`, or `reasoning`
+4. **Manifest resolves the tier to a model** (auto-assigned or user-overridden)
+5. **Request is proxied** to the selected provider with the resolved model
+
+```typescript
+// From packages/backend/src/routing/resolve.controller.ts:17-31
+@Post('resolve')
+async resolve(@Body() body: ResolveRequestDto, @Req() req: Request) {
+  const { agentId } = req.ingestionContext;
+  return this.resolveService.resolve(
+    agentId,
+    body.messages,
+    body.tools,
+    body.tool_choice,
+    body.max_tokens,
+    body.recentTiers,
+  );
+}
+```
+
+## Routing Tiers
+
+Four tiers are available:
+
+| Tier | Description | Example Models |
+|------|-------------|----------------|
+| **Simple** | Basic queries, simple Q&A, short context | GPT-3.5, Haiku, Gemini Flash |
+| **Standard** | Typical assistant tasks, moderate context | GPT-4o-mini, Sonnet 3.5 |
+| **Complex** | Advanced reasoning, large context, multi-step | GPT-4o, Opus 3, Gemini Pro |
+| **Reasoning** | Deep reasoning tasks, math, code generation | O1, O3, DeepSeek-R1 |
+
+```typescript
+// From packages/backend/src/routing/scorer/types.ts
+export const TIERS = ['simple', 'standard', 'complex', 'reasoning'] as const;
+```
+
+## Provider Management
+
+### Connecting Providers
+
+Connect a provider by adding an API key:
+
+```http
+POST /api/v1/routing/{agentName}/providers
+Content-Type: application/json
+
+{
+  "provider": "openai",
+  "apiKey": "sk-..."
+}
+```
+
+Response:
+
+```json
+{
+  "id": "provider-uuid",
+  "provider": "openai",
+  "is_active": true
+}
+```
+
+API keys are encrypted with AES-256-GCM before storage:
+
+```typescript
+// From packages/backend/src/routing/routing.service.ts:40-76
+async upsertProvider(
+  agentId: string,
+  userId: string,
+  provider: string,
+  apiKey?: string,
+): Promise<{ provider: UserProvider; isNew: boolean }> {
+  const apiKeyEncrypted = apiKey ? encrypt(apiKey, getEncryptionSecret()) : null;
+
+  const existing = await this.providerRepo.findOne({
+    where: { agent_id: agentId, provider },
+  });
+
+  if (existing) {
+    if (apiKeyEncrypted !== null) {
+      existing.api_key_encrypted = apiKeyEncrypted;
+    }
+    existing.is_active = true;
+    existing.updated_at = new Date().toISOString();
+    await this.providerRepo.save(existing);
+    await this.autoAssign.recalculate(agentId);
+    return { provider: existing, isNew: false };
+  }
+
+  const record = { /* ... */ };
+  await this.providerRepo.insert(record);
+  await this.autoAssign.recalculate(agentId);
+  return { provider: record, isNew: true };
+}
+```
+
+### Supported Providers
+
+- **OpenAI**: Requires `OPENAI_API_KEY` (format: `sk-...`)
+- **Anthropic**: Requires `ANTHROPIC_API_KEY` (format: `sk-ant-...`)
+- **Google**: Requires `GOOGLE_API_KEY`
+- **DeepSeek**: Requires `DEEPSEEK_API_KEY`
+- **Ollama**: No API key (connects to local Ollama server)
+- **OpenRouter**: Use `openrouter` provider with OpenRouter API key
+
+### Viewing Connected Providers
+
+```http
+GET /api/v1/routing/{agentName}/providers
+```
+
+Response:
+
+```json
+[
+  {
+    "id": "provider-uuid",
+    "provider": "openai",
+    "is_active": true,
+    "has_api_key": true,
+    "key_prefix": "sk-proj",
+    "connected_at": "2024-03-04T12:00:00Z"
+  }
+]
+```
+
+The `key_prefix` shows the first 4-8 characters of the API key for identification.
+
+### Removing Providers
+
+```http
+DELETE /api/v1/routing/{agentName}/providers/{provider}
+```
+
+Removes the provider and clears any overrides using that provider's models:
+
+```typescript
+// From packages/backend/src/routing/routing.service.ts:78-121
+async removeProvider(agentId: string, provider: string): Promise<{ notifications: string[] }> {
+  const existing = await this.providerRepo.findOne({
+    where: { agent_id: agentId, provider },
+  });
+  if (!existing) throw new NotFoundException('Provider not found');
+
+  // Find overrides that belong to this provider
+  const overrides = await this.tierRepo.find({
+    where: { agent_id: agentId, override_model: Not(IsNull()) },
+  });
+
+  const invalidated: { tier: string; modelName: string }[] = [];
+  for (const tier of overrides) {
+    const pricing = this.pricingCache.getByModel(tier.override_model!);
+    if (pricing && pricing.provider.toLowerCase() === provider.toLowerCase()) {
+      invalidated.push({ tier: tier.tier, modelName: tier.override_model! });
+      tier.override_model = null;
+      tier.updated_at = new Date().toISOString();
+      await this.tierRepo.save(tier);
+    }
+  }
+
+  // Deactivate provider and recalculate
+  existing.is_active = false;
+  existing.updated_at = new Date().toISOString();
+  await this.providerRepo.save(existing);
+  await this.autoAssign.recalculate(agentId);
+
+  return { notifications: invalidated.map(/* ... */) };
+}
+```
+
+## Tier Assignments
+
+### Auto-Assignment
+
+When providers are connected, Manifest automatically assigns the best model to each tier:
+
+```typescript
+// From packages/backend/src/routing/tier-auto-assign.service.ts
+async recalculate(agentId: string): Promise<void> {
+  const providers = await this.providerRepo.find({
+    where: { agent_id: agentId, is_active: true },
+  });
+
+  const activeProviders = providers.map((p) => p.provider);
+  const models = this.pricingCache.getAll().filter((m) =>
+    activeProviders.some((p) => p.toLowerCase() === m.provider.toLowerCase())
+  );
+
+  for (const tier of TIERS) {
+    const bestModel = this.selectBestModel(models, tier);
+    const existing = await this.tierRepo.findOne({
+      where: { agent_id: agentId, tier },
+    });
+
+    if (existing) {
+      existing.auto_assigned_model = bestModel?.model_name ?? null;
+      existing.updated_at = new Date().toISOString();
+      await this.tierRepo.save(existing);
+    } else {
+      await this.tierRepo.insert({
+        id: uuid(),
+        agent_id: agentId,
+        tier,
+        auto_assigned_model: bestModel?.model_name ?? null,
+        override_model: null,
+        created_at: now,
+        updated_at: now,
+      });
+    }
+  }
+}
+```
+
+The `selectBestModel()` function ranks models by:
+
+1. **Capability scores**: `capability_reasoning`, `capability_code`, `quality_score`
+2. **Context window**: Larger is better for complex/reasoning tiers
+3. **Cost**: Lower is better (tie-breaker)
+
+### Viewing Tier Assignments
+
+```http
+GET /api/v1/routing/{agentName}/tiers
+```
+
+Response:
+
+```json
+[
+  {
+    "tier": "simple",
+    "auto_assigned_model": "gpt-3.5-turbo",
+    "override_model": null
+  },
+  {
+    "tier": "standard",
+    "auto_assigned_model": "gpt-4o-mini",
+    "override_model": "claude-3-5-sonnet-20241022"
+  },
+  {
+    "tier": "complex",
+    "auto_assigned_model": "gpt-4o",
+    "override_model": null
+  },
+  {
+    "tier": "reasoning",
+    "auto_assigned_model": "o1",
+    "override_model": null
+  }
+]
+```
+
+### Setting Overrides
+
+Manually assign a model to a tier:
+
+```http
+PUT /api/v1/routing/{agentName}/tiers/{tier}
+Content-Type: application/json
+
+{
+  "model": "claude-3-5-sonnet-20241022"
+}
+```
+
+The override takes precedence over the auto-assigned model.
+
+### Clearing Overrides
+
+```http
+DELETE /api/v1/routing/{agentName}/tiers/{tier}
+```
+
+Resets the tier to use the auto-assigned model.
+
+### Reset All Overrides
+
+```http
+POST /api/v1/routing/{agentName}/tiers/reset-all
+```
+
+Clears all overrides for the agent.
+
+## Routing UI
+
+The Routing page (`/agents/{agentName}/routing`) displays:
+
+### Provider Icons
+
+Shows icons for all connected providers:
+
+```typescript
+// From packages/frontend/src/pages/Routing.tsx:214-230
+<div class="routing-providers-info">
+  <span class="routing-providers-info__icons">
+    <For each={activeProviderIds()}>
+      {(provId) => {
+        const provDef = PROVIDERS.find((p) => p.id === provId);
+        return (
+          <span class="routing-providers-info__icon" title={provDef?.name ?? provId}>
+            {providerIcon(provId, 16)}
+          </span>
+        );
+      }}
+    </For>
+  </span>
+  <span class="routing-providers-info__label">
+    {activeProviderIds().length} provider{activeProviderIds().length !== 1 ? 's' : ''}
+  </span>
+</div>
+```
+
+### Tier Cards
+
+Four cards showing the assigned model for each tier:
+
+```typescript
+// From packages/frontend/src/pages/Routing.tsx:232-314
+<div class="routing-cards">
+  <For each={STAGES}>
+    {(stage) => {
+      const tier = () => getTier(stage.id);
+      const eff = () => {
+        const t = tier();
+        return t ? effectiveModel(t) : null;
+      };
+      const isManual = () => tier()?.override_model !== null;
+
+      return (
+        <div class="routing-card">
+          <div class="routing-card__header">
+            <span class="routing-card__tier">{stage.label}</span>
+            <span class="routing-card__desc">{stage.desc}</span>
+          </div>
+          <div class="routing-card__body">
+            <Show when={eff()} fallback={<div>No model available</div>}>
+              {(modelName) => (
+                <>
+                  <div class="routing-card__override">
+                    {providerIcon(providerIdForModel(modelName()), 16)}
+                    <span>{labelFor(modelName())}</span>
+                    {!isManual() && <span class="routing-card__auto-tag">auto</span>}
+                  </div>
+                  <span class="routing-card__sub">{priceLabel(modelName())}</span>
+                </>
+              )}
+            </Show>
+          </div>
+          <div class="routing-card__actions">
+            <button onClick={() => setDropdownTier(stage.id)}>Override</button>
+            {isManual() && <button onClick={() => handleReset(stage.id)}>Reset</button>}
+          </div>
+        </div>
+      );
+    }}
+  </For>
+</div>
+```
+
+### Model Picker Modal
+
+Clicking "Override" opens a modal to select a model:
+
+```typescript
+// From packages/frontend/src/components/ModelPickerModal.tsx
+<ModelPickerModal
+  tierId={tierId()}
+  models={models() ?? []}  // Available models from active providers
+  tiers={tiers() ?? []}
+  onSelect={handleOverride}
+  onClose={() => setDropdownTier(null)}
+/>
+```
+
+The modal shows:
+
+- Model name
+- Provider icon
+- Pricing (per 1M tokens)
+- Context window
+- Currently assigned tiers
+
+## Proxy Endpoint
+
+Once routing is configured, send requests to the proxy:
+
+```http
+POST /v1/chat/completions
+Authorization: Bearer mnfst_...
+Content-Type: application/json
+
+{
+  "messages": [
+    { "role": "user", "content": "Explain quantum computing" }
+  ],
+  "stream": true
+}
+```
+
+Manifest:
+
+1. Authenticates the request (Bearer token = agent OTLP key)
+2. Scores the request and assigns a tier
+3. Resolves the tier to a model
+4. Proxies to the provider
+5. Returns the response with routing metadata in headers:
+
+```http
+HTTP/1.1 200 OK
+X-Manifest-Tier: standard
+X-Manifest-Model: gpt-4o-mini
+X-Manifest-Provider: openai
+X-Manifest-Confidence: 0.87
+X-Manifest-Reason: moderate_context
+```
+
+```typescript
+// From packages/backend/src/routing/proxy/proxy.controller.ts:70-76
+const metaHeaders: Record<string, string> = {
+  'X-Manifest-Tier': meta.tier,
+  'X-Manifest-Model': meta.model,
+  'X-Manifest-Provider': meta.provider,
+  'X-Manifest-Confidence': String(meta.confidence),
+  'X-Manifest-Reason': meta.reason,
+};
+```
+
+## Provider Aliases
+
+Some providers have multiple names (e.g., "openai" vs "OpenAI"). Manifest normalizes these:
+
+```typescript
+// From packages/backend/src/routing/provider-aliases.ts
+const ALIASES: Record<string, string[]> = {
+  openai: ['openai', 'OpenAI'],
+  anthropic: ['anthropic', 'Anthropic'],
+  google: ['google', 'Google', 'google-ai'],
+  // ...
+};
+
+export function expandProviderNames(names: string[]): Set<string> {
+  const expanded = new Set<string>();
+  for (const name of names) {
+    const normalized = name.toLowerCase();
+    const aliases = ALIASES[normalized] ?? [name];
+    for (const alias of aliases) {
+      expanded.add(alias.toLowerCase());
+    }
+  }
+  return expanded;
+}
+```
+
+## Disabling Routing
+
+Deactivate all providers and clear overrides:
+
+```http
+POST /api/v1/routing/{agentName}/providers/deactivate-all
+```
+
+```typescript
+// From packages/backend/src/routing/routing.service.ts:123-133
+async deactivateAllProviders(agentId: string): Promise<void> {
+  await this.providerRepo.update(
+    { agent_id: agentId },
+    { is_active: false, updated_at: new Date().toISOString() },
+  );
+  await this.tierRepo.update(
+    { agent_id: agentId },
+    { override_model: null, updated_at: new Date().toISOString() },
+  );
+  await this.autoAssign.recalculate(agentId);
+}
+```
+
+This disables the proxy endpoint until routing is re-enabled.
+
+<Info>
+API keys are encrypted at rest using AES-256-GCM. The encryption secret is derived from the `BETTER_AUTH_SECRET` environment variable.
+</Info>
+
+## Ollama Integration
+
+Ollama is a special provider for local models:
+
+- **No API key required**: Connects to `http://localhost:11434` by default
+- **Zero cost**: All Ollama models have `input_price_per_token = 0`
+- **Auto-sync**: Manifest syncs available Ollama models on provider connect
+
+```http
+POST /api/v1/routing/ollama/sync
+```
+
+Fetches the list of local models from Ollama and adds them to `model_pricing`.
+
+<Warning>
+Routing requires at least one active provider. The proxy endpoint (`/v1/chat/completions`) returns `404` if routing is disabled.
+</Warning>

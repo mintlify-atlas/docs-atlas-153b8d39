@@ -1,0 +1,169 @@
+---
+title: Self-Hosting Overview
+description: Run Manifest on your own infrastructure for full control and privacy
+---
+
+## Why Self-Host?
+
+Self-hosting Manifest gives you complete control over your AI observability infrastructure:
+
+- **Data sovereignty** — All telemetry data stays on your infrastructure
+- **Privacy** — No third-party services access your agent metrics
+- **Customization** — Configure the platform to match your requirements
+- **Cost control** — No cloud subscription fees, pay only for your infrastructure
+- **Compliance** — Meet data residency and regulatory requirements
+
+Manifest deploys as a single service that serves both the API and frontend from the same port. The embedded architecture makes deployment straightforward — you only need to run one container or process.
+
+## Requirements
+
+### Runtime
+
+- **Node.js 22.x** or later
+- **PostgreSQL 16** or later (production)
+- **2GB RAM** minimum (4GB recommended)
+- **1 CPU core** minimum (2 cores recommended)
+
+### Database
+
+Manifest uses PostgreSQL in production (`cloud` mode). The application automatically runs database migrations on startup, so no manual schema management is needed.
+
+**Local development mode** uses SQLite (via `sql.js`) with zero native dependencies. This mode is designed for development and testing, not production use.
+
+### Environment
+
+The server binds to `127.0.0.1:3001` by default. For Docker or cloud platforms like Railway, set `BIND_ADDRESS=0.0.0.0` to accept connections from outside the container.
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Manifest Server                       │
+│                    (Single Service)                      │
+│                                                          │
+│  ┌──────────────┐         ┌─────────────────────────┐  │
+│  │   Frontend   │         │      Backend API        │  │
+│  │  (SolidJS)   │         │      (NestJS)           │  │
+│  │              │         │                         │  │
+│  │  Static      │         │  • Auth (Better Auth)   │  │
+│  │  Files       │         │  • Analytics            │  │
+│  │              │         │  • OTLP Ingestion       │  │
+│  │              │         │  • LLM Routing Proxy    │  │
+│  └──────────────┘         └─────────────────────────┘  │
+│                                                          │
+│         Both served on same port (3001)                 │
+└─────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+                  ┌─────────────────┐
+                  │   PostgreSQL    │
+                  │   Database      │
+                  └─────────────────┘
+```
+
+### Single-Service Design
+
+In production, NestJS serves the frontend static files (built by Vite) alongside the API routes. This means:
+
+- One port to expose (default: 3001)
+- One process to manage
+- Simplified deployment and networking
+- Frontend and API share the same origin (no CORS issues)
+
+API routes (`/api/*`, `/otlp/*`) are excluded from static file serving and handled by the NestJS backend.
+
+### Multi-Tenancy
+
+Manifest uses a simple tenant isolation model:
+
+```
+User (Better Auth) → Tenant → Agent → AgentApiKey (mnfst_*)
+                                │
+                                └──→ agent_messages (telemetry data)
+```
+
+- **Tenant**: Created automatically on first agent creation. `tenant.name` = `user.id`
+- **Agent**: Belongs to a tenant. Unique constraint on `[tenant_id, name]`
+- **AgentApiKey**: One-to-one with agent. `mnfst_*` format key for OTLP ingestion
+- All analytics queries filter by user ID for data isolation
+
+### Authentication
+
+Manifest uses [Better Auth](https://www.better-auth.com/) for user authentication:
+
+- Email/password authentication (always available)
+- Optional OAuth providers: Google, GitHub, Discord
+- Cookie-based sessions
+- PostgreSQL for session storage (via `pg.Pool`)
+
+Three global guards run on every request:
+
+1. **SessionGuard** — Validates Better Auth cookie session
+2. **ApiKeyGuard** — Falls back to `X-API-Key` header auth for programmatic access
+3. **ThrottlerGuard** — Rate limiting (default: 100 req/min)
+
+### OTLP Ingestion
+
+Manifest accepts OpenTelemetry Protocol (OTLP) data at three endpoints:
+
+- `POST /otlp/v1/traces` — Trace spans
+- `POST /otlp/v1/metrics` — Metrics
+- `POST /otlp/v1/logs` — Log records
+
+Authentication uses Bearer tokens with agent API keys (`mnfst_*` format). The `OtlpAuthGuard` caches valid keys in memory for 5 minutes to reduce database load.
+
+### Database Migrations
+
+TypeORM migrations are version-controlled in `src/database/migrations/`. The application runs all pending migrations automatically on startup (`migrationsRun: true`) within a single transaction.
+
+**Schema synchronization is permanently disabled** (`synchronize: false`). All schema changes must go through migrations.
+
+Better Auth manages its own tables separately via `ctx.runMigrations()`.
+
+## Deployment Options
+
+Manifest can be deployed in several ways:
+
+1. **Docker** — Single container with PostgreSQL (recommended for production)
+2. **Railway** — One-click deploy with managed PostgreSQL
+3. **Manual** — Build and run directly with Node.js
+4. **Local mode** — SQLite-based mode for development (not for production)
+
+See the [Deployment Guide](/advanced/self-hosting/deployment) for detailed instructions.
+
+## Security Considerations
+
+### Content Security Policy (CSP)
+
+Helmet enforces a strict CSP that only allows `'self'` origins. **No external CDNs are permitted.** All assets (fonts, icons, stylesheets) must be self-hosted under `packages/frontend/public/`.
+
+The only exception is `connectSrc` which includes `https://eu.i.posthog.com` for anonymous product analytics (opt-out via `MANIFEST_TELEMETRY_OPTOUT=1`).
+
+### API Key Security
+
+- API keys are hashed using scrypt KDF before storage
+- Only the key prefix and hash are stored in the database
+- Timing-safe comparison prevents timing attacks
+- Keys are never logged in plain text
+
+### Provider Key Encryption
+
+LLM provider API keys (OpenAI, Anthropic, etc.) are encrypted using AES-256-GCM before storage. The encryption key is derived from `BETTER_AUTH_SECRET`.
+
+### Reverse Proxy Support
+
+In production (non-dev mode), Express trusts reverse proxy headers (`trust proxy: 1`) so it can see the real client IP and protocol. This is essential for platforms like Railway, Render, and Fly.io.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Deployment Guide" icon="rocket" href="/advanced/self-hosting/deployment">
+    Deploy Manifest with Docker, Railway, or manual setup
+  </Card>
+  <Card title="Configuration" icon="gear" href="/advanced/self-hosting/configuration">
+    Configure environment variables and server options
+  </Card>
+  <Card title="Database Setup" icon="database" href="/advanced/self-hosting/database">
+    Set up PostgreSQL, run migrations, and manage backups
+  </Card>
+</CardGroup>

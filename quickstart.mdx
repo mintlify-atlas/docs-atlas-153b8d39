@@ -1,80 +1,357 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get Manifest running in under 2 minutes with smart LLM routing and cost tracking
 ---
 
-## Get started in three steps
+## Get started in 3 steps
 
-Get your documentation site running locally and make your first customization.
+Manifest installs as an OpenClaw plugin and starts tracking costs immediately. Choose **cloud mode** for hosted dashboards or **local mode** to keep everything on your machine.
 
-### Step 1: Set up your local environment
+<Steps>
+  <Step title="Install the plugin">
+    Install Manifest via the OpenClaw CLI:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```bash
+    openclaw plugins install manifest
+    ```
 
-### Step 2: Deploy your changes
+    This downloads the plugin package from npm and registers it with your OpenClaw gateway. The plugin includes:
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    - OpenTelemetry SDK for traces, metrics, and logs
+    - Smart routing engine with 23-dimension scoring
+    - Embedded server for local mode (optional)
+    - Agent self-query tools (`manifest_usage`, `manifest_costs`, `manifest_health`)
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    <Note>
+    The plugin auto-detects if you're using the built-in `diagnostics-otel` plugin. If both are enabled, you'll see an error. Disable `diagnostics-otel` first:
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```bash
+    openclaw plugins disable diagnostics-otel
+    openclaw gateway restart
+    ```
+    </Note>
+  </Step>
 
-### Step 3: Go live
+  <Step title="Choose your mode">
+    Manifest runs in two modes: **cloud** (default) or **local**.
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    <Tabs>
+      <Tab title="Cloud mode (default)">
+        Cloud mode sends telemetry metadata to the hosted dashboard at [app.manifest.build](https://app.manifest.build). Your **message content never leaves your machine** — only OTLP metadata (model, tokens, latency) is sent.
+
+        **Sign up and configure:**
+
+        1. Create an account at [app.manifest.build](https://app.manifest.build)
+        2. Copy your API key from the dashboard (starts with `mnfst_`)
+        3. Configure the plugin:
+
+        ```bash
+        openclaw config set plugins.entries.manifest.config.apiKey "mnfst_YOUR_KEY"
+        openclaw gateway restart
+        ```
+
+        **What you get:**
+        - Multi-device access to your dashboard
+        - Multi-agent support with team collaboration
+        - Centralized cost tracking across agents
+        - No local server management
+
+        <Warning>
+        Keep your API key secure. If compromised, rotate it immediately in the dashboard settings.
+        </Warning>
+      </Tab>
+
+      <Tab title="Local mode">
+        Local mode runs an embedded NestJS server on your machine. All data stays local — zero external dependencies.
+
+        **Configure:**
+
+        ```bash
+        openclaw config set plugins.entries.manifest.config.mode local
+        openclaw gateway restart
+        ```
+
+        **What happens:**
+        - Embedded server starts on `http://127.0.0.1:2099`
+        - SQLite database created at `~/.openclaw/manifest/manifest.db`
+        - API key auto-generated and stored in `~/.openclaw/manifest/config.json`
+        - Dashboard shows an orange **Dev** badge to indicate local mode
+
+        **What you get:**
+        - 100% local data — nothing sent externally
+        - No sign-up or account required
+        - Offline-capable
+        - Full control over data storage
+
+        <Tip>
+        To access the dashboard from other devices on your network, use Tailscale:
+
+        ```bash
+        tailscale serve --bg 2099
+        ```
+        </Tip>
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="View your dashboard">
+    After restarting the gateway, telemetry starts flowing immediately.
+
+    **Open the dashboard:**
+
+    <Tabs>
+      <Tab title="Cloud mode">
+        Visit [app.manifest.build](https://app.manifest.build) and log in. You'll see:
+
+        - **Overview** — Total tokens, costs, messages, and agents
+        - **Token usage** — Input, output, and cached tokens over time
+        - **Cost tracking** — Spend per model with trend charts
+        - **Message log** — Full conversation history with metadata
+        - **Agents** — Multi-agent dashboard with per-agent sparklines
+      </Tab>
+
+      <Tab title="Local mode">
+        Open `http://127.0.0.1:2099` in your browser. You'll see:
+
+        - **Overview** — Total tokens, costs, messages for your agent
+        - **Token usage** — Input, output, and cached tokens over time
+        - **Cost tracking** — Spend per model with trend charts
+        - **Message log** — Full conversation history with metadata
+        - **Settings** — API key rotation, agent rename, deletion
+
+        <Note>
+        The dashboard header shows an orange **Dev** badge in local mode. This indicates you're running the embedded server.
+        </Note>
+      </Tab>
+    </Tabs>
+
+    **Telemetry pipeline:**
+
+    ```
+    OpenClaw Agent → Manifest Plugin → OTLP Exporter → Backend → Dashboard
+    ```
+
+    Every agent request flows through this pipeline:
+
+    1. **Message received** — Plugin creates OpenTelemetry trace span
+    2. **Routing** — If model is `manifest/auto`, scoring algorithm selects tier
+    3. **Execution** — Agent calls the selected model
+    4. **Completion** — Plugin calculates costs, attaches metadata
+    5. **Export** — OTLP exporter batches telemetry and sends to backend (every 5s for traces, 30s for metrics)
+    6. **Dashboard update** — Backend ingests data and updates real-time charts
+
+    <Tip>
+    The gateway batches OTLP exports, so new messages may take 5-30 seconds to appear in the dashboard.
+    </Tip>
+  </Step>
+</Steps>
+
+## Verify the connection
+
+Confirm that Manifest is connected and tracking your agent:
+
+### Check gateway logs
+
+When the gateway starts, you should see:
+
+```bash
+[manifest] Observability pipeline active
+[manifest]   Endpoint=https://app.manifest.build/otlp  # or http://127.0.0.1:2099/otlp
+[manifest] Connection verified (agent: your-agent-name)
+[manifest] Registered as OpenAI-compatible provider (proxy mode)
+```
+
+If you see errors:
+
+- **Cloud mode:** Verify your API key starts with `mnfst_` and is correctly set
+- **Local mode:** Check that port 2099 is not in use by another process
+
+### Use the agent tool
+
+Manifest registers three agent tools for self-query:
+
+<CodeGroup>
+```bash manifest_health
+# In your agent chat:
+Can you check if Manifest observability is connected?
+
+# Agent response:
+{
+  "endpointReachable": true,
+  "authValid": true,
+  "agentName": "my-agent",
+  "status": "ok"
+}
+```
+
+```bash manifest_usage
+# In your agent chat:
+How many tokens have I used today?
+
+# Agent response:
+{
+  "totalTokens": 45203,
+  "inputTokens": 32104,
+  "outputTokens": 13099,
+  "cachedTokens": 8420,
+  "messageCount": 87
+}
+```
+
+```bash manifest_costs
+# In your agent chat:
+What have I spent on LLM costs this week?
+
+# Agent response:
+{
+  "totalCost": 2.47,
+  "breakdown": [
+    { "model": "gpt-4.1", "cost": 1.82 },
+    { "model": "claude-sonnet-4.5", "cost": 0.53 },
+    { "model": "deepseek-r1", "cost": 0.12 }
+  ]
+}
+```
+</CodeGroup>
+
+These tools let your agent query its own usage and costs directly.
+
+## Enable smart routing
+
+By default, Manifest only **observes** your requests — it doesn't change routing. To enable smart routing:
+
+### Use the `manifest/auto` model
+
+Set your agent's model to `manifest/auto`:
+
+```bash
+openclaw config set agents.defaults.model manifest/auto
+openclaw gateway restart
+```
+
+Now every request is analyzed and routed to the optimal model automatically.
+
+### How routing works
+
+When the agent calls `manifest/auto`:
+
+<Steps>
+  <Step title="Conversation analysis">
+    The plugin extracts the last **10 messages** from the conversation history, excluding `system` and `developer` messages (which inflate scores).
+  </Step>
+
+  <Step title="Scoring across 23 dimensions">
+    The scoring algorithm evaluates:
+
+    - **Message count** — More messages = higher complexity
+    - **Conversation depth** — How many turns back-and-forth?
+    - **Token count** — Longer prompts = more context
+    - **Text complexity** — Code blocks, technical jargon, math notation
+    - **Tool usage** — Function calling adds complexity
+    - **Momentum** — What tier did the last 5 requests use?
+  </Step>
+
+  <Step title="Tier assignment">
+    Based on the score, the request is assigned a tier:
+
+    - **Fast** (score 0-30) — Simple queries, factual questions, summarization
+    - **Balanced** (score 31-60) — Moderate complexity, multi-turn conversations
+    - **Premium** (score 61-100) — Complex reasoning, code generation, long context
+  </Step>
+
+  <Step title="Model selection">
+    Manifest picks the **cheapest available model** in that tier from your configured providers. If no provider is set for that tier, it falls back to the next tier up.
+  </Step>
+</Steps>
+
+<Note>
+Routing adds **under 2ms latency** to each request. The scoring algorithm is optimized for speed and runs in-memory.
+</Note>
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
+Now that Manifest is running, explore these features:
 
 <CardGroup cols={2}>
+  <Card title="Installation guide" icon="book" href="/installation">
+    Detailed installation instructions for advanced setups, dev mode, and troubleshooting.
+  </Card>
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+  <Card title="Dashboard tour" icon="chart-line" href="/features/dashboard">
+    Learn how to read the analytics, filter by time range, and interpret cost breakdowns.
+  </Card>
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+  <Card title="Configure routing" icon="sliders" href="/features/routing-config">
+    Set up provider keys, customize tier assignments, and fine-tune routing behavior.
+  </Card>
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Multi-agent setup" icon="users" href="/guides/multi-agent">
+    Track multiple agents with separate API keys and cost allocation.
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+## Troubleshooting
+
+### Plugin not loading
+
+**Symptom:** Gateway starts but no `[manifest]` logs appear.
+
+**Fix:**
+
+1. Check plugin is enabled:
+   ```bash
+   openclaw plugins list
+   ```
+
+2. Verify installation:
+   ```bash
+   openclaw plugins install manifest
+   openclaw gateway restart
+   ```
+
+### Connection check failed
+
+**Symptom:** `[manifest] Connection check failed: [error message]`
+
+**Cloud mode fixes:**
+- Verify API key is correct and starts with `mnfst_`
+- Check network connectivity to `app.manifest.build`
+- Ensure firewall allows HTTPS traffic
+
+**Local mode fixes:**
+- Check port 2099 is not in use: `lsof -i :2099`
+- Try a different port:
+  ```bash
+  openclaw config set plugins.entries.manifest.config.port 2100
+  openclaw gateway restart
+  ```
+
+### No telemetry in dashboard
+
+**Symptom:** Dashboard is empty even after sending requests.
+
+**Fix:**
+
+1. Send a test message to your agent
+2. Wait 30 seconds for OTLP batch export
+3. Check gateway logs for export errors
+4. Verify agent is using a configured model (not `manifest/auto` without provider setup)
+
+### Routing not working
+
+**Symptom:** All requests go to the same model despite using `manifest/auto`.
+
+**Fix:**
+
+1. Verify model is set to `manifest/auto`:
+   ```bash
+   openclaw config get agents.defaults.model
+   ```
+
+2. Check provider configuration in dashboard → **Routing** tab
+3. Ensure at least one provider key is configured for each tier
+4. Review gateway logs for routing resolution messages
+
+<Card title="Need more help?" icon="discord" href="https://discord.gg/FepAked3W7">
+  Join the Discord community for support, bug reports, and feature requests.
+</Card>

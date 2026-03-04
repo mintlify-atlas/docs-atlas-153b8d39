@@ -1,97 +1,300 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: Manifest Documentation
+mode: custom
 ---
 
-## Setting up
+<div className="relative overflow-hidden bg-gradient-to-br from-[#1a1710] via-[#0f1117] to-[#1a1d27] dark:from-[#1a1710] dark:via-[#0f1117] dark:to-[#1a1d27] py-20">
+  <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(60,207,177,0.15),transparent_50%)]"></div>
+  <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_80%,rgba(41,53,129,0.1),transparent_50%)]"></div>
+  
+  <div className="relative max-w-6xl mx-auto px-6 lg:px-8">
+    <div className="grid lg:grid-cols-12 gap-12 items-center">
+      <div className="lg:col-span-7">
+        <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-white mb-6">
+          Take control of your OpenClaw costs
+        </h1>
+        <p className="text-lg sm:text-xl text-gray-300 dark:text-gray-300 mb-8 max-w-2xl">
+          Smart LLM routing and observability platform that cuts AI costs up to 70% with real-time tracking, intelligent model selection, and comprehensive telemetry.
+        </p>
+        <div className="flex flex-wrap gap-4">
+          <a 
+            href="/quickstart" 
+            className="inline-flex items-center px-6 py-3 rounded-lg bg-[#3ccfb1] hover:bg-[#32b89f] text-white font-semibold transition-colors no-underline"
+          >
+            Get Started
+            <svg className="ml-2 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </a>
+          <a 
+            href="/api/introduction" 
+            className="inline-flex items-center px-6 py-3 rounded-lg border border-white/30 bg-white/10 hover:bg-white/20 text-white font-semibold transition-colors no-underline"
+          >
+            API Reference
+          </a>
+        </div>
+      </div>
+      <div className="lg:col-span-5 hidden lg:block">
+        <div className="relative">
+          <div className="absolute inset-0 bg-gradient-to-r from-[#3ccfb1] to-[#293581] rounded-2xl blur-3xl opacity-20"></div>
+          <div className="relative bg-[#1a1d27] dark:bg-[#1a1d27] border border-[#27272a] dark:border-[#27272a] rounded-2xl p-6 shadow-2xl">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="w-3 h-3 rounded-full bg-red-500"></div>
+              <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+              <div className="w-3 h-3 rounded-full bg-green-500"></div>
+            </div>
+            <pre className="text-sm text-gray-300 dark:text-gray-300 overflow-x-auto">
+              <code>{`openclaw plugins install manifest
+openclaw config set plugins.entries.\\
+  manifest.config.mode local
+openclaw gateway restart
 
-Get your documentation site up and running in minutes.
+✓ Plugin installed successfully
+→ Dashboard: http://127.0.0.1:2099`}</code>
+            </pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <div className="text-center mb-12">
+    <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">Quick start</h2>
+    <p className="text-base text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
+      Get up and running with Manifest in minutes
+    </p>
+  </div>
 
-## Make it yours
+  <Steps>
+    <Step title="Install the plugin">
+      Install Manifest as an OpenClaw plugin with a single command:
 
-Design a docs site that looks great and empowers your users.
+      ```bash
+      openclaw plugins install manifest
+      ```
 
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
-  </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
-  </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
-  </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
-  </Card>
-</Columns>
+      The plugin hooks into your OpenClaw gateway and starts routing and tracking all LLM requests automatically.
+    </Step>
 
-## Create beautiful pages
+    <Step title="Choose your mode">
+      Manifest runs in two modes — cloud (default) or local:
 
-Everything you need to create world-class documentation.
+      <Tabs>
+        <Tab title="Cloud mode">
+          Sign up at [app.manifest.build](https://app.manifest.build) to get your API key, then configure:
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+          ```bash
+          openclaw config set plugins.entries.manifest.config.apiKey "mnfst_YOUR_KEY"
+          openclaw gateway restart
+          ```
 
-## Need inspiration?
+          Your telemetry flows to the cloud dashboard with secure blind proxy architecture.
+        </Tab>
+        <Tab title="Local mode">
+          Run the embedded server locally with zero external dependencies:
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+          ```bash
+          openclaw config set plugins.entries.manifest.config.mode local
+          openclaw gateway restart
+          ```
+
+          Dashboard opens at **http://127.0.0.1:2099**. All data stays on your machine.
+        </Tab>
+      </Tabs>
+    </Step>
+
+    <Step title="View your dashboard">
+      Your agent telemetry starts flowing immediately. Open the dashboard to see:
+
+      - Real-time cost and token tracking
+      - Message logs with full conversation history
+      - Model usage breakdowns across 300+ supported models
+      - Smart routing decisions and scoring insights
+
+      <Note>
+        In local mode, the dashboard shows an orange **Dev** badge. In cloud mode, access your dashboard at app.manifest.build.
+      </Note>
+    </Step>
+  </Steps>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <div className="text-center mb-12">
+    <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">Explore by topic</h2>
+    <p className="text-base text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
+      Dive deeper into Manifest's features and capabilities
+    </p>
+  </div>
+
+  <CardGroup cols={3}>
+    <Card title="Core concepts" icon="lightbulb" href="/concepts/overview">
+      Understand how Manifest routes requests, tracks costs, and integrates with OpenClaw
+    </Card>
+    <Card title="Dashboard" icon="chart-line" href="/features/dashboard">
+      Explore real-time analytics, cost tracking, and message logs
+    </Card>
+    <Card title="LLM routing" icon="route" href="/concepts/routing">
+      Learn how the 23-dimension scoring algorithm selects optimal models
+    </Card>
+    <Card title="Observability" icon="eye" href="/concepts/observability">
+      OpenTelemetry native with OTLP traces, metrics, and logs
+    </Card>
+    <Card title="Multi-agent" icon="users" href="/guides/multi-agent">
+      Manage multiple agents with separate tracking and cost allocation
+    </Card>
+    <Card title="Self-hosting" icon="server" href="/advanced/self-hosting/overview">
+      Deploy your own Manifest instance with PostgreSQL and custom config
+    </Card>
+  </CardGroup>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <div className="text-center mb-12">
+    <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">Features</h2>
+    <p className="text-base text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
+      Everything you need to optimize your AI costs
+    </p>
+  </div>
+
+  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <a href="/concepts/routing" className="group block rounded-2xl border border-gray-200 dark:border-[#27272a] hover:border-[#3ccfb1] dark:hover:border-[#3ccfb1] overflow-hidden transition-all no-underline bg-white dark:bg-[#1a1d27]">
+      <div className="p-6">
+        <div className="flex items-start gap-4">
+          <div className="flex-shrink-0 w-12 h-12 rounded-lg bg-[#3ccfb1]/10 dark:bg-[#3ccfb1]/10 flex items-center justify-center">
+            <svg className="w-6 h-6 text-[#3ccfb1]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+          </div>
+          <div className="flex-1">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Smart routing</h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+              23-dimension scoring algorithm that analyzes every query and routes to the most cost-effective model in under 2ms.
+            </p>
+            <span className="text-sm text-[#3ccfb1] group-hover:text-[#32b89f] font-medium inline-flex items-center">
+              Learn more
+              <svg className="ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </span>
+          </div>
+        </div>
+      </div>
+    </a>
+
+    <a href="/features/cost-tracking" className="group block rounded-2xl border border-gray-200 dark:border-[#27272a] hover:border-[#3ccfb1] dark:hover:border-[#3ccfb1] overflow-hidden transition-all no-underline bg-white dark:bg-[#1a1d27]">
+      <div className="p-6">
+        <div className="flex items-start gap-4">
+          <div className="flex-shrink-0 w-12 h-12 rounded-lg bg-[#3ccfb1]/10 dark:bg-[#3ccfb1]/10 flex items-center justify-center">
+            <svg className="w-6 h-6 text-[#3ccfb1]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <div className="flex-1">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Cost tracking</h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+              Real-time dashboards show tokens and costs per model, agent, and time period with pricing database covering 300+ models.
+            </p>
+            <span className="text-sm text-[#3ccfb1] group-hover:text-[#32b89f] font-medium inline-flex items-center">
+              Learn more
+              <svg className="ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </span>
+          </div>
+        </div>
+      </div>
+    </a>
+
+    <a href="/concepts/observability" className="group block rounded-2xl border border-gray-200 dark:border-[#27272a] hover:border-[#3ccfb1] dark:hover:border-[#3ccfb1] overflow-hidden transition-all no-underline bg-white dark:bg-[#1a1d27]">
+      <div className="p-6">
+        <div className="flex items-start gap-4">
+          <div className="flex-shrink-0 w-12 h-12 rounded-lg bg-[#3ccfb1]/10 dark:bg-[#3ccfb1]/10 flex items-center justify-center">
+            <svg className="w-6 h-6 text-[#3ccfb1]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+          </div>
+          <div className="flex-1">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">OTLP native</h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+              Standard OpenTelemetry ingestion with traces, metrics, and logs for full visibility into agent behavior.
+            </p>
+            <span className="text-sm text-[#3ccfb1] group-hover:text-[#32b89f] font-medium inline-flex items-center">
+              Learn more
+              <svg className="ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </span>
+          </div>
+        </div>
+      </div>
+    </a>
+
+    <a href="/features/alerts" className="group block rounded-2xl border border-gray-200 dark:border-[#27272a] hover:border-[#3ccfb1] dark:hover:border-[#3ccfb1] overflow-hidden transition-all no-underline bg-white dark:bg-[#1a1d27]">
+      <div className="p-6">
+        <div className="flex items-start gap-4">
+          <div className="flex-shrink-0 w-12 h-12 rounded-lg bg-[#3ccfb1]/10 dark:bg-[#3ccfb1]/10 flex items-center justify-center">
+            <svg className="w-6 h-6 text-[#3ccfb1]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+            </svg>
+          </div>
+          <div className="flex-1">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Alerts & notifications</h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+              Set usage thresholds and receive email alerts when your consumption exceeds limits you define.
+            </p>
+            <span className="text-sm text-[#3ccfb1] group-hover:text-[#32b89f] font-medium inline-flex items-center">
+              Learn more
+              <svg className="ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </span>
+          </div>
+        </div>
+      </div>
+    </a>
+  </div>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <div className="text-center mb-12">
+    <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">Resources</h2>
+    <p className="text-base text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
+      Learn more and connect with the community
+    </p>
+  </div>
+
+  <CardGroup cols={2}>
+    <Card title="GitHub repository" icon="github" href="https://github.com/mnfst/manifest">
+      Star the repo, report issues, and contribute to the open-source project
+    </Card>
+    <Card title="Discord community" icon="discord" href="https://discord.gg/FepAked3W7">
+      Join the conversation, get help, and share feedback with the team
+    </Card>
+    <Card title="Contributing guide" icon="code-pull-request" href="/advanced/development/contributing">
+      Learn how to contribute code, report bugs, and improve the documentation
+    </Card>
+    <Card title="Architecture deep dive" icon="sitemap" href="/advanced/development/architecture">
+      Explore the technical architecture and design decisions
+    </Card>
+  </CardGroup>
+</div>
+
+<div className="mt-20 mb-16 max-w-5xl mx-auto px-6">
+  <div className="rounded-2xl bg-gradient-to-r from-[#3ccfb1] to-[#293581] p-8 md:p-12 text-center">
+    <h2 className="text-3xl font-bold text-white mb-4">Ready to optimize your AI costs?</h2>
+    <p className="text-lg text-white/90 mb-8 max-w-2xl mx-auto">
+      Install Manifest in minutes and start tracking costs, routing requests intelligently, and gaining full observability into your agents.
+    </p>
+    <a 
+      href="/quickstart" 
+      className="inline-flex items-center px-6 py-3 rounded-lg bg-white hover:bg-gray-100 text-gray-900 font-semibold transition-colors no-underline"
+    >
+      Get started now
+      <svg className="ml-2 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+      </svg>
+    </a>
+  </div>
+</div>

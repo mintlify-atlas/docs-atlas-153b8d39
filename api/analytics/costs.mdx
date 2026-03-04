@@ -1,0 +1,195 @@
+---
+title: 'Cost Analytics'
+api: 'GET /api/v1/costs'
+description: 'Retrieve cost analytics with hourly/daily timeseries and model-level breakdown'
+---
+
+## Overview
+
+The costs endpoint provides detailed cost analysis across time and models. It returns summary statistics, hourly/daily cost timeseries, and a breakdown of costs by model.
+
+Costs are calculated using model pricing data and token counts. Negative costs (invalid pricing) are sanitized to zero.
+
+## Authentication
+
+Requires session authentication (cookie) or API key via `X-API-Key` header.
+
+## Query Parameters
+
+<ParamField query="range" type="string" default="7d">
+  Time range for analytics. Valid values: `1h`, `6h`, `24h`, `7d`, `30d`
+  
+  Note: Default is `7d` for cost analytics (differs from other endpoints).
+</ParamField>
+
+<ParamField query="agent_name" type="string">
+  Filter analytics to a specific agent. If omitted, returns data for all agents.
+</ParamField>
+
+## Response Schema
+
+<ResponseField name="summary" type="object">
+  Cost summary for the selected time range
+  
+  <Expandable title="summary fields">
+    <ResponseField name="weekly_cost" type="object">
+      Total cost with trend analysis
+      
+      <Expandable title="weekly_cost fields">
+        <ResponseField name="value" type="number">
+          Total cost in USD for the time range
+        </ResponseField>
+        
+        <ResponseField name="trend_pct" type="number">
+          Percentage change vs. previous equivalent period. Positive = increase, negative = decrease.
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="daily" type="array">
+  Daily cost timeseries
+  
+  <Expandable title="daily item fields">
+    <ResponseField name="date" type="string">
+      Date in `YYYY-MM-DD` format
+    </ResponseField>
+    
+    <ResponseField name="cost" type="number">
+      Total cost in USD for this day
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="hourly" type="array">
+  Hourly cost timeseries
+  
+  <Expandable title="hourly item fields">
+    <ResponseField name="hour" type="string">
+      ISO 8601 timestamp for the hour bucket. Format: `YYYY-MM-DD HH:00:00`
+    </ResponseField>
+    
+    <ResponseField name="cost" type="number">
+      Total cost in USD for this hour
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="by_model" type="array">
+  Cost and token breakdown by model, ordered by token usage (highest first)
+  
+  <Expandable title="by_model item fields">
+    <ResponseField name="model" type="string">
+      Model identifier (e.g., `claude-4.5-sonnet`, `gpt-4o`, `gemini-2.0-flash`)
+    </ResponseField>
+    
+    <ResponseField name="tokens" type="number">
+      Total tokens (input + output) consumed by this model
+    </ResponseField>
+    
+    <ResponseField name="share_pct" type="number">
+      Percentage of total tokens consumed by this model (0-100, one decimal place)
+      
+      Useful for displaying proportional cost/usage charts.
+    </ResponseField>
+    
+    <ResponseField name="estimated_cost" type="number">
+      Total cost in USD for this model
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Example Request
+
+```bash cURL
+curl -X GET "https://api.manifest.build/api/v1/costs?range=30d" \
+  -H "X-API-Key: your-api-key"
+```
+
+## Example Response
+
+```json
+{
+  "summary": {
+    "weekly_cost": {
+      "value": 12.48,
+      "trend_pct": -8.5
+    }
+  },
+  "daily": [
+    {
+      "date": "2026-02-03",
+      "cost": 0.38
+    },
+    {
+      "date": "2026-02-04",
+      "cost": 0.42
+    },
+    {
+      "date": "2026-02-05",
+      "cost": 0.51
+    },
+    {
+      "date": "2026-02-06",
+      "cost": 0.39
+    },
+    {
+      "date": "2026-02-07",
+      "cost": 0.44
+    },
+    {
+      "date": "2026-02-08",
+      "cost": 0.36
+    },
+    {
+      "date": "2026-02-09",
+      "cost": 0.48
+    }
+  ],
+  "hourly": [
+    {
+      "hour": "2026-02-09 00:00:00",
+      "cost": 0.018
+    },
+    {
+      "hour": "2026-02-09 01:00:00",
+      "cost": 0.022
+    },
+    {
+      "hour": "2026-02-09 02:00:00",
+      "cost": 0.015
+    }
+  ],
+  "by_model": [
+    {
+      "model": "claude-4.5-sonnet",
+      "tokens": 3250000,
+      "share_pct": 62.3,
+      "estimated_cost": 8.12
+    },
+    {
+      "model": "gpt-4o",
+      "tokens": 1450000,
+      "share_pct": 27.8,
+      "estimated_cost": 3.18
+    },
+    {
+      "model": "gemini-2.0-flash",
+      "tokens": 520000,
+      "share_pct": 9.9,
+      "estimated_cost": 1.18
+    }
+  ]
+}
+```
+
+## Notes
+
+- **Cost calculation**: Costs are computed as `(input_tokens * input_price + output_tokens * output_price)` using model pricing from the `model_pricing` table.
+- **Pricing data**: Model prices are synced from Anthropic's API and manually updated for other providers. Missing pricing results in `null` costs.
+- **Cost sanitization**: Negative costs (data errors) are treated as 0 and excluded from aggregations.
+- **Both timeseries returned**: Similar to `/tokens`, this endpoint returns both `hourly` and `daily` arrays in every response.
+- **Caching**: Responses are cached for 5 minutes (see `DASHBOARD_CACHE_TTL_MS`).
+- **Multi-tenancy**: Data is automatically filtered by authenticated user.
+- **Default range**: Unlike other analytics endpoints, costs default to `7d` (weekly view).

@@ -1,0 +1,314 @@
+---
+title: Local Mode
+description: Running Manifest in local mode with embedded server and SQLite database
+---
+
+Local mode runs a complete Manifest server on your machine with zero configuration. It's perfect for individual developers, local testing, and getting started quickly.
+
+## How It Works
+
+When you set `mode: local`, the Manifest plugin:
+
+1. **Starts an embedded NestJS server** on `http://127.0.0.1:2099` (configurable)
+2. **Creates a SQLite database** at `~/.openclaw/manifest/manifest.db`
+3. **Auto-generates an API key** stored in `~/.openclaw/manifest/config.json`
+4. **Registers itself as a provider** so you can use `manifest/auto` for routing
+5. **Serves the dashboard UI** at the same address
+
+No external dependencies, no cloud services, no authentication — everything runs locally.
+
+## Setup
+
+<Steps>
+  <Step title="Install the plugin">
+    ```bash
+    openclaw plugins install manifest
+    ```
+  </Step>
+
+  <Step title="Configure local mode">
+    ```bash
+    openclaw config set plugins.entries.manifest.config.mode local
+    ```
+    
+    This is the default mode, so you can skip this step if you haven't changed it.
+  </Step>
+
+  <Step title="Optional: Customize port and host">
+    ```bash
+    # Change port (default: 2099)
+    openclaw config set plugins.entries.manifest.config.port 3030
+    
+    # Change host (default: 127.0.0.1)
+    openclaw config set plugins.entries.manifest.config.host 0.0.0.0
+    ```
+  </Step>
+
+  <Step title="Restart the gateway">
+    ```bash
+    openclaw gateway restart
+    ```
+    
+    The plugin will start the embedded server. You'll see output like:
+    
+    ```
+    [manifest] Local mode — starting embedded server...
+    [manifest] Local server running on http://127.0.0.1:2099
+    [manifest]   Dashboard: http://127.0.0.1:2099
+    [manifest]   DB: /home/you/.openclaw/manifest/manifest.db
+    ```
+  </Step>
+
+  <Step title="Access the dashboard">
+    Open `http://127.0.0.1:2099` in your browser (or your configured port).
+    
+    The dashboard shows a **Dev** badge in the header when running in local mode.
+  </Step>
+</Steps>
+
+## Database Location
+
+The SQLite database is stored at:
+
+```
+~/.openclaw/manifest/manifest.db
+```
+
+This file contains:
+- Agent metadata
+- Message logs and telemetry data
+- Token usage and cost records
+- LLM routing decisions
+- Security events
+
+The database persists across gateway restarts. To reset everything:
+
+```bash
+rm -rf ~/.openclaw/manifest/
+openclaw gateway restart
+```
+
+## Auto-Generated API Key
+
+Local mode generates a unique API key on first run:
+
+```json
+// ~/.openclaw/manifest/config.json
+{
+  "apiKey": "mnfst_local_a1b2c3d4e5f6..."
+}
+```
+
+This key is used for:
+- OTLP authentication (telemetry ingestion)
+- Provider registration with OpenClaw
+- Dashboard authentication bypass (loopback connections are trusted)
+
+You don't need to manage this key — it's automatically injected into OpenClaw's config.
+
+## Provider Configuration
+
+Local mode automatically registers the `manifest` provider in OpenClaw's configuration:
+
+```json
+// ~/.openclaw/openclaw.json (auto-updated)
+{
+  "models": {
+    "providers": {
+      "manifest": {
+        "baseUrl": "http://127.0.0.1:2099/v1",
+        "api": "openai-completions",
+        "apiKey": "mnfst_local_a1b2c3d4e5f6...",
+        "models": [{"id": "auto", "name": "auto"}]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "models": ["manifest/auto"]
+    }
+  }
+}
+```
+
+This enables you to use `manifest/auto` as a model without manual configuration.
+
+## Authentication in Local Mode
+
+Local mode uses **loopback bypass authentication**:
+
+- Requests from `127.0.0.1` or `::1` are trusted without Bearer token validation
+- The `OtlpAuthGuard` accepts any non-`mnfst_*` token from loopback IPs
+- The gateway sends `Authorization: Bearer dev-no-auth` which is accepted
+- No Better Auth session management — all routes are accessible
+
+<Warning>
+  Local mode should only be used for development. The authentication bypass makes it unsuitable for production or shared environments.
+</Warning>
+
+## Using Local Mode
+
+Once configured, use Manifest just like cloud mode:
+
+```bash
+# Smart routing with auto model selection
+openclaw chat --model manifest/auto "Write a sorting algorithm"
+
+# Check plugin status
+/manifest
+
+# View dashboard
+open http://127.0.0.1:2099
+```
+
+All telemetry data stays on your machine.
+
+## Port Conflicts
+
+If port 2099 is already in use, you'll see:
+
+```
+[manifest] Port 2099 is already in use by another process.
+  Change it with: openclaw config set plugins.entries.manifest.config.port 2100
+  Then restart the gateway.
+```
+
+The plugin will check if the existing process is Manifest. If so, it reuses the connection:
+
+```
+[manifest] Reusing existing server at http://127.0.0.1:2099
+```
+
+To use a different port:
+
+```bash
+openclaw config set plugins.entries.manifest.config.port 3030
+openclaw gateway restart
+```
+
+## Embedded Server Architecture
+
+The local mode server is the same NestJS backend used in production, bundled with the plugin:
+
+```
+packages/openclaw-plugin/
+├── dist/
+│   ├── index.js          # Plugin entry point
+│   ├── server.js         # Embedded server launcher
+│   ├── backend/          # Compiled NestJS backend
+│   └── ...
+└── public/               # Frontend dashboard assets
+```
+
+When started, the server:
+1. Initializes a SQLite database using `sql.js` (WASM-based, zero native deps)
+2. Runs TypeORM migrations automatically
+3. Serves the frontend from `public/`
+4. Exposes API routes at `/api/*` and OTLP ingestion at `/otlp/*`
+5. Skips Better Auth (session management) in favor of loopback auth
+
+The server is started via `api.registerService()` and stopped when the gateway shuts down.
+
+## Data Persistence
+
+SQLite data persists between restarts. The database file is in `autoSave: true` mode, so writes are immediately flushed to disk.
+
+To view the database directly:
+
+```bash
+sqlite3 ~/.openclaw/manifest/manifest.db
+```
+
+Key tables:
+- `agents` — Your agents
+- `agent_messages` — Message logs
+- `llm_calls` — Individual LLM API calls
+- `tier_assignments` — Routing tier configurations
+- `user_providers` — Connected LLM providers
+
+## Switching to Cloud Mode
+
+To migrate from local to cloud mode:
+
+<Steps>
+  <Step title="Sign up for Manifest Cloud">
+    Go to [app.manifest.build](https://app.manifest.build) and create an account.
+  </Step>
+
+  <Step title="Get your API key">
+    Navigate to Settings → API Keys and generate a new key.
+  </Step>
+
+  <Step title="Update configuration">
+    ```bash
+    openclaw config set plugins.entries.manifest.config.mode cloud
+    openclaw config set plugins.entries.manifest.config.apiKey mnfst_YOUR_KEY
+    openclaw gateway restart
+    ```
+  </Step>
+</Steps>
+
+Your local data stays in `~/.openclaw/manifest/` but won't be used. Cloud mode stores data on Manifest's servers.
+
+## Troubleshooting
+
+### Server fails to start
+
+Check the error message:
+
+```
+[manifest] Failed to start local server: <error>
+  Try reinstalling: openclaw plugins install manifest
+  Then restart: openclaw gateway restart
+```
+
+Common causes:
+- Missing embedded server files (reinstall the plugin)
+- Port conflict (change the port)
+- Corrupted database (delete `~/.openclaw/manifest/` and restart)
+
+### Dashboard not loading
+
+Verify the server is running:
+
+```bash
+curl http://127.0.0.1:2099/api/v1/health
+```
+
+Expected response: `{"status":"ok"}`
+
+If the health check fails, check gateway logs for startup errors.
+
+### Telemetry not appearing
+
+Telemetry is batched and sent every 10-30 seconds. New messages may take a moment to appear.
+
+If data still doesn't appear:
+
+1. Verify the gateway is using the plugin:
+   ```bash
+   /manifest
+   ```
+
+2. Check the connection status:
+   ```
+   Mode: local
+   Endpoint reachable: yes
+   Auth valid: yes
+   ```
+
+3. Restart the gateway to reset the OTLP pipeline:
+   ```bash
+   openclaw gateway restart
+   ```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Cloud Mode" icon="cloud" href="/guides/cloud-mode">
+    Switch to cloud mode for team collaboration
+  </Card>
+  <Card title="Custom Providers" icon="plug" href="/guides/custom-providers">
+    Add your LLM provider API keys for routing
+  </Card>
+</CardGroup>

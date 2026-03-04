@@ -1,0 +1,411 @@
+---
+title: Custom LLM Providers
+description: Add your own API keys for OpenAI, Anthropic, Google, and other LLM providers
+---
+
+Manifest's smart routing requires API keys for the LLM providers you want to use. This guide shows how to configure providers for intelligent model selection.
+
+## Supported Providers
+
+Manifest supports the following providers:
+
+| Provider | Models | Authentication |
+|----------|--------|----------------|
+| **OpenAI** | GPT-4o, GPT-4o-mini, o1, o1-mini, o3-mini | API key (starts with `sk-`) |
+| **Anthropic** | Claude 3.5 Sonnet, Claude 3.5 Haiku, Claude 3 Opus | API key (starts with `sk-ant-`) |
+| **Google** | Gemini 2.0 Flash, Gemini 1.5 Pro, Gemini 1.5 Flash | API key |
+| **DeepSeek** | DeepSeek V3, DeepSeek Chat | API key |
+| **OpenRouter** | All OpenRouter models | API key (starts with `sk-or-`) |
+| **Ollama** | Local models (Llama, Mistral, etc.) | None (local) |
+
+## Adding a Provider
+
+<Steps>
+  <Step title="Navigate to Routing settings">
+    In the Manifest dashboard:
+    
+    - **Cloud mode**: Sign in at [app.manifest.build](https://app.manifest.build) → Select agent → **Routing**
+    - **Local mode**: Go to `http://127.0.0.1:2099` → **Routing**
+  </Step>
+
+  <Step title="Add a provider">
+    Click **Providers** → **+ Add Provider**
+    
+    Select the provider from the dropdown:
+    ```
+    OpenAI
+    Anthropic
+    Google
+    DeepSeek
+    OpenRouter
+    Ollama
+    ```
+  </Step>
+
+  <Step title="Enter your API key">
+    Paste your API key in the input field:
+    
+    ```
+    sk-proj-abcd1234...
+    ```
+    
+    The key is encrypted using AES-256-GCM before storage.
+  </Step>
+
+  <Step title="Save">
+    Click **Save**. The provider is now active and available for routing.
+    
+    The UI shows:
+    - Provider name
+    - Key prefix (first 8 characters, e.g., `sk-proj-...`)
+    - Status (Active/Inactive)
+    - Connected models
+  </Step>
+</Steps>
+
+## Provider-Specific Setup
+
+### OpenAI
+
+<Steps>
+  <Step title="Get an API key">
+    Go to [platform.openai.com/api-keys](https://platform.openai.com/api-keys) and create a new key.
+    
+    Key format: `sk-proj-...` (newer format) or `sk-...` (legacy format)
+  </Step>
+
+  <Step title="Add to Manifest">
+    ```
+    Providers → + Add Provider → OpenAI
+    API Key: sk-proj-abcd1234...
+    ```
+  </Step>
+
+  <Step title="Available models">
+    After adding OpenAI, these models become available:
+    - `gpt-4o` — Latest GPT-4 Optimized
+    - `gpt-4o-mini` — Faster, cheaper GPT-4 variant
+    - `o1` — Reasoning model (high latency, high cost)
+    - `o1-mini` — Smaller reasoning model
+    - `o3-mini` — Newest reasoning model
+    - `gpt-3.5-turbo` — Legacy fast model
+  </Step>
+</Steps>
+
+### Anthropic
+
+<Steps>
+  <Step title="Get an API key">
+    Go to [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) and create a new key.
+    
+    Key format: `sk-ant-api03-...`
+  </Step>
+
+  <Step title="Add to Manifest">
+    ```
+    Providers → + Add Provider → Anthropic
+    API Key: sk-ant-api03-abcd1234...
+    ```
+  </Step>
+
+  <Step title="Available models">
+    After adding Anthropic:
+    - `claude-3-5-sonnet-20241022` — Latest Sonnet (best balance)
+    - `claude-3-5-haiku-20241022` — Fastest Claude model
+    - `claude-3-opus-20240229` — Highest quality (expensive)
+  </Step>
+</Steps>
+
+### Google
+
+<Steps>
+  <Step title="Get an API key">
+    Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and create a new key.
+  </Step>
+
+  <Step title="Add to Manifest">
+    ```
+    Providers → + Add Provider → Google
+    API Key: AIzaSy...
+    ```
+  </Step>
+
+  <Step title="Available models">
+    After adding Google:
+    - `gemini-2.0-flash-exp` — Latest experimental Flash model
+    - `gemini-1.5-pro` — High-quality, multimodal
+    - `gemini-1.5-flash` — Fast, cost-effective
+  </Step>
+</Steps>
+
+### DeepSeek
+
+<Steps>
+  <Step title="Get an API key">
+    Sign up at [platform.deepseek.com](https://platform.deepseek.com) and create an API key.
+  </Step>
+
+  <Step title="Add to Manifest">
+    ```
+    Providers → + Add Provider → DeepSeek
+    API Key: sk-...
+    ```
+  </Step>
+
+  <Step title="Available models">
+    After adding DeepSeek:
+    - `deepseek-chat` — Latest chat model
+    - `deepseek-reasoner` — Reasoning-focused model (similar to o1)
+  </Step>
+</Steps>
+
+### OpenRouter
+
+<Steps>
+  <Step title="Get an API key">
+    Go to [openrouter.ai/keys](https://openrouter.ai/keys) and create a new key.
+    
+    Key format: `sk-or-v1-...`
+  </Step>
+
+  <Step title="Add to Manifest">
+    ```
+    Providers → + Add Provider → OpenRouter
+    API Key: sk-or-v1-abcd1234...
+    ```
+  </Step>
+
+  <Step title="Available models">
+    OpenRouter provides access to 100+ models from multiple providers. Manifest automatically syncs supported models from OpenRouter's catalog.
+    
+    Popular OpenRouter models:
+    - `anthropic/claude-3.5-sonnet`
+    - `openai/gpt-4o`
+    - `google/gemini-pro`
+    - `meta-llama/llama-3.1-405b`
+  </Step>
+</Steps>
+
+### Ollama (Local)
+
+<Steps>
+  <Step title="Install Ollama">
+    Download Ollama from [ollama.com](https://ollama.com) and install it.
+  </Step>
+
+  <Step title="Pull models">
+    ```bash
+    ollama pull llama3.1
+    ollama pull mistral
+    ```
+  </Step>
+
+  <Step title="Start Ollama server">
+    ```bash
+    ollama serve
+    ```
+    
+    Default endpoint: `http://127.0.0.1:11434`
+  </Step>
+
+  <Step title="Add to Manifest">
+    ```
+    Providers → + Add Provider → Ollama
+    API Key: (leave blank)
+    ```
+    
+    No API key is required for Ollama.
+  </Step>
+
+  <Step title="Available models">
+    Manifest detects locally-installed Ollama models:
+    - `llama3.1` — Meta's Llama 3.1
+    - `mistral` — Mistral 7B
+    - `codellama` — Code-specialized Llama
+    - Any other pulled models
+  </Step>
+</Steps>
+
+## Automatic Model Discovery
+
+When you add a provider, Manifest automatically:
+
+1. **Fetches the model list** from the provider's API
+2. **Syncs pricing data** from the `model_pricing` table
+3. **Enables models for routing** based on tier compatibility
+4. **Recalculates tier assignments** to optimize cost and quality
+
+You don't need to manually configure which models are available.
+
+## Tier Auto-Assignment
+
+Manifest assigns models to tiers automatically based on:
+
+- **Cost** — Cheaper models preferred when quality is sufficient
+- **Capability** — Complex tasks get more powerful models
+- **Provider availability** — Only uses models from active providers
+
+Example tier assignments after adding OpenAI + Anthropic:
+
+| Tier | Auto-Assigned Model | Reason |
+|------|---------------------|--------|
+| Simple | `gpt-4o-mini` | Cheapest, fast, good for simple queries |
+| Standard | `claude-3-5-haiku-20241022` | Balanced cost and quality |
+| Complex | `gpt-4o` | High capability, reasonable cost |
+| Reasoning | `o1-mini` | Best reasoning quality |
+
+See [LLM Routing](/concepts/routing) for details on how the scorer assigns tiers.
+
+## Removing a Provider
+
+<Steps>
+  <Step title="Navigate to Providers">
+    Dashboard → Routing → Providers
+  </Step>
+
+  <Step title="Remove the provider">
+    Click the **X** or **Remove** button next to the provider.
+  </Step>
+
+  <Step title="Confirm">
+    A warning will appear if any tier overrides use models from this provider:
+    
+    ```
+    gpt-4o-mini is no longer available.
+    Simple tier is back to automatic mode (claude-3-5-haiku-20241022).
+    ```
+    
+    Overrides are cleared automatically, and the tier falls back to auto-assignment.
+  </Step>
+
+  <Step title="Recalculation">
+    Manifest recalculates tier assignments using the remaining providers.
+  </Step>
+</Steps>
+
+## Provider Aliases
+
+Manifest recognizes common provider aliases:
+
+| Canonical Name | Aliases |
+|----------------|--------|
+| OpenAI | `openai`, `OpenAI` |
+| Anthropic | `anthropic`, `Anthropic` |
+| Google | `google`, `Google`, `gemini`, `Gemini` |
+| DeepSeek | `deepseek`, `DeepSeek` |
+| OpenRouter | `openrouter`, `OpenRouter` |
+| Ollama | `ollama`, `Ollama` |
+
+Aliases are case-insensitive and expanded internally by the `expandProviderNames` function (packages/backend/src/routing/provider-aliases.ts:7).
+
+## API Key Security
+
+### Encryption
+
+API keys are encrypted before storage using AES-256-GCM:
+
+```typescript
+// packages/backend/src/common/utils/crypto.util.ts
+encrypt(apiKey, getEncryptionSecret())
+```
+
+The encryption secret is derived from the `BETTER_AUTH_SECRET` environment variable. Keys are never stored in plaintext.
+
+### Key Prefix Display
+
+The UI shows only the first 8 characters of your key (e.g., `sk-proj-...`) for verification. The full key is never displayed after initial entry.
+
+### Key Rotation
+
+To rotate an API key:
+
+1. Get a new key from the provider
+2. Update the provider in Manifest:
+   ```
+   Providers → OpenAI → Edit → Enter new key → Save
+   ```
+3. Delete the old key from the provider's dashboard
+
+Manifest uses the new key immediately for all requests.
+
+## Rate Limiting
+
+Manifest respects provider rate limits:
+
+- **429 Too Many Requests** — Manifest backs off exponentially
+- **503 Service Unavailable** — Manifest retries with jitter
+
+If a provider is rate-limited, Manifest may fall back to another provider in the same tier.
+
+## Cost Optimization
+
+To minimize costs:
+
+1. **Add multiple providers** — Manifest chooses the cheapest model for each tier
+2. **Use tier overrides sparingly** — Auto-assignment optimizes cost automatically
+3. **Monitor usage** — Set up notification rules for cost thresholds
+4. **Remove expensive providers** — If you don't need reasoning models, skip OpenAI o1
+
+## Troubleshooting
+
+### Provider not appearing after adding
+
+Check the browser console for errors. Common causes:
+- Invalid API key format
+- Network error communicating with Manifest backend
+- Provider API is down
+
+Remove and re-add the provider:
+
+```
+Providers → Remove → + Add Provider
+```
+
+### Models not available for routing
+
+Verify the provider is active:
+
+```
+Providers → OpenAI → Status: Active
+```
+
+If inactive, the provider's API key may be invalid. Update the key:
+
+```
+Providers → OpenAI → Edit → Enter new key → Save
+```
+
+### Routing not using my preferred model
+
+Manifest automatically selects models based on cost and capability. To force a specific model:
+
+```
+Routing → Tiers → Complex → Override Model → gpt-4o → Save
+```
+
+This locks the Complex tier to `gpt-4o` regardless of cost.
+
+### API key validation errors
+
+If you see "Auth invalid" in the logs:
+
+1. Verify the key is correct (copy from provider dashboard)
+2. Check the key hasn't expired (some providers expire keys after inactivity)
+3. Test the key manually:
+   ```bash
+   curl https://api.openai.com/v1/models \
+     -H "Authorization: Bearer sk-proj-..."
+   ```
+
+If the manual test fails, regenerate the key from the provider.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Routing" icon="route" href="/concepts/routing">
+    Learn how Manifest routes requests across models
+  </Card>
+  <Card title="Costs" icon="dollar-sign" href="/features/cost-tracking">
+    Track and optimize your LLM spending
+  </Card>
+</CardGroup>

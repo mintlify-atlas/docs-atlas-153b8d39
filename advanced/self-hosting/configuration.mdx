@@ -1,0 +1,566 @@
+---
+title: Configuration
+description: Environment variables and configuration options for self-hosted Manifest
+---
+
+## Overview
+
+Manifest is configured entirely through environment variables. All configuration is read from `process.env` at application startup.
+
+The backend requires a `.env` file at `packages/backend/.env` with at least `BETTER_AUTH_SECRET` (32+ chars). The `auth.instance.ts` reads `process.env` at import time, before NestJS `ConfigModule` loads `.env`, so env vars must be available to the Node process.
+
+## Core Variables (Required)
+
+These variables must be set for production deployments.
+
+### BETTER_AUTH_SECRET
+
+**Required.** Secret for Better Auth session signing and encryption.
+
+- **Type**: String
+- **Minimum length**: 32 characters
+- **Format**: Hex string recommended
+
+```bash
+BETTER_AUTH_SECRET=a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
+```
+
+**Generate a secure secret:**
+
+```bash
+openssl rand -hex 32
+```
+
+This secret is used for:
+
+- Session token signing
+- Cookie encryption
+- Provider API key encryption (AES-256-GCM)
+
+<Warning>
+  Never commit this value to version control. Rotate it if exposed.
+</Warning>
+
+### DATABASE_URL
+
+**Required in production.** PostgreSQL connection string.
+
+- **Type**: String
+- **Format**: `postgresql://user:password@host:port/database`
+- **Default**: `postgresql://myuser:mypassword@localhost:5432/mydatabase`
+
+```bash
+DATABASE_URL=postgresql://manifest:secure_password@postgres:5432/manifest
+```
+
+**Connection string components:**
+
+- `user` — PostgreSQL username
+- `password` — PostgreSQL password
+- `host` — Database hostname or IP
+- `port` — Database port (default: 5432)
+- `database` — Database name
+
+**SSL connections:**
+
+```bash
+DATABASE_URL=postgresql://user:pass@host:5432/db?sslmode=require
+```
+
+**Connection pooling:**
+
+TypeORM manages connection pooling automatically. Default pool size is 10 connections.
+
+## Server Configuration
+
+### PORT
+
+Server listening port.
+
+- **Type**: Number
+- **Default**: `3001`
+
+```bash
+PORT=3001
+```
+
+### BIND_ADDRESS
+
+Address the server binds to.
+
+- **Type**: String
+- **Default**: `127.0.0.1`
+- **Docker/Railway**: Use `0.0.0.0`
+
+```bash
+BIND_ADDRESS=0.0.0.0
+```
+
+<Note>
+  Use `127.0.0.1` for local development (loopback only). Use `0.0.0.0` for Docker containers and cloud platforms to accept external connections.
+</Note>
+
+### NODE_ENV
+
+Runtime environment.
+
+- **Type**: String
+- **Values**: `development`, `production`, `test`
+- **Default**: `development`
+
+```bash
+NODE_ENV=production
+```
+
+**Effects:**
+
+- `development`: CORS enabled, detailed error messages
+- `production`: CORS disabled, trust proxy enabled, minimal logging
+
+### CORS_ORIGIN
+
+Allowed CORS origin (development only).
+
+- **Type**: String or RegExp
+- **Default**: `http://localhost:3000`
+
+```bash
+CORS_ORIGIN=http://localhost:3000
+```
+
+CORS is **only enabled** when `NODE_ENV !== 'production'`. In production, the frontend is served from the same origin as the API.
+
+### BETTER_AUTH_URL
+
+Base URL for Better Auth.
+
+- **Type**: String
+- **Default**: `http://localhost:3001`
+- **Format**: Full URL including protocol
+
+```bash
+BETTER_AUTH_URL=https://manifest.example.com
+```
+
+This URL is used for:
+
+- OAuth callback URLs
+- Email verification links
+- Password reset links
+
+### FRONTEND_PORT
+
+Extra trusted origin port for Better Auth (optional).
+
+- **Type**: Number
+- **Default**: None
+
+```bash
+FRONTEND_PORT=3000
+```
+
+Useful when running the frontend dev server on a different port than the backend.
+
+## Rate Limiting
+
+### THROTTLE_TTL
+
+Rate limit window in milliseconds.
+
+- **Type**: Number
+- **Default**: `60000` (1 minute)
+
+```bash
+THROTTLE_TTL=60000
+```
+
+### THROTTLE_LIMIT
+
+Maximum requests per window.
+
+- **Type**: Number
+- **Default**: `100`
+
+```bash
+THROTTLE_LIMIT=100
+```
+
+**Example:** With defaults, each client can make 100 requests per minute.
+
+## Authentication
+
+### API_KEY
+
+Secret for programmatic API access via `X-API-Key` header.
+
+- **Type**: String
+- **Default**: None (optional)
+
+```bash
+API_KEY=dev-api-key-manifest-001
+```
+
+Use this for:
+
+- CI/CD automation
+- Monitoring scripts
+- Programmatic access without user sessions
+
+**Example request:**
+
+```bash
+curl -H "X-API-Key: dev-api-key-manifest-001" \
+  http://localhost:3001/api/v1/overview
+```
+
+<Note>
+  The API key is checked with timing-safe comparison to prevent timing attacks.
+</Note>
+
+## Email Configuration (Optional)
+
+Required for email verification and password reset. Without these, the app runs but email features are silently skipped.
+
+### MAILGUN_API_KEY
+
+Mailgun API key.
+
+- **Type**: String
+- **Format**: Starts with `key-`
+- **Default**: None
+
+```bash
+MAILGUN_API_KEY=key-1234567890abcdef
+```
+
+Get your API key from [Mailgun Dashboard](https://app.mailgun.com/app/account/security/api_keys).
+
+### MAILGUN_DOMAIN
+
+Mailgun sending domain.
+
+- **Type**: String
+- **Format**: Domain name
+- **Default**: None
+
+```bash
+MAILGUN_DOMAIN=mg.manifest.build
+```
+
+### NOTIFICATION_FROM_EMAIL
+
+Sender email address.
+
+- **Type**: String
+- **Format**: Email address
+- **Default**: `noreply@manifest.build`
+
+```bash
+NOTIFICATION_FROM_EMAIL=noreply@manifest.build
+```
+
+<Info>
+  Email features (verification, password reset, notifications) only activate when **both** `MAILGUN_API_KEY` and `MAILGUN_DOMAIN` are set.
+</Info>
+
+## OAuth Providers (Optional)
+
+Each provider only activates when **both** `CLIENT_ID` and `CLIENT_SECRET` are set.
+
+### Google OAuth
+
+```bash
+GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+```
+
+**Setup:**
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+2. Create OAuth 2.0 Client ID
+3. Add authorized redirect URI: `{BETTER_AUTH_URL}/api/auth/callback/google`
+
+### GitHub OAuth
+
+```bash
+GITHUB_CLIENT_ID=your-github-client-id
+GITHUB_CLIENT_SECRET=your-github-client-secret
+```
+
+**Setup:**
+
+1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
+2. Create OAuth App
+3. Set callback URL: `{BETTER_AUTH_URL}/api/auth/callback/github`
+
+### Discord OAuth
+
+```bash
+DISCORD_CLIENT_ID=your-discord-client-id
+DISCORD_CLIENT_SECRET=your-discord-client-secret
+```
+
+**Setup:**
+
+1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
+2. Create Application
+3. Add redirect: `{BETTER_AUTH_URL}/api/auth/callback/discord`
+
+## Advanced Configuration
+
+### PLUGIN_OTLP_ENDPOINT
+
+Custom OTLP endpoint for the plugin setup UI.
+
+- **Type**: String
+- **Default**: None
+
+```bash
+PLUGIN_OTLP_ENDPOINT=http://localhost:3001/otlp
+```
+
+This pre-fills the OTLP endpoint in the agent setup instructions.
+
+### SEED_DATA
+
+Seed demo data on startup (development/test only).
+
+- **Type**: Boolean
+- **Values**: `true`, `false`
+- **Default**: `false`
+
+```bash
+SEED_DATA=true
+```
+
+**Seeded data:**
+
+- Admin user: `admin@manifest.build` / `manifest`
+- Tenant: `seed-tenant-001`
+- Agent: `demo-agent`
+- OTLP key: `mnfst_dev-otlp-key-001`
+- API key: `dev-api-key-manifest-001`
+- 12 sample security events
+- Model pricing for 100+ models
+
+<Warning>
+  Never use `SEED_DATA=true` in production. It creates predictable credentials.
+</Warning>
+
+### MANIFEST_MODE
+
+Operating mode.
+
+- **Type**: String
+- **Values**: `local`, `cloud`
+- **Default**: `cloud`
+
+```bash
+MANIFEST_MODE=local
+```
+
+**Modes:**
+
+- `cloud` — PostgreSQL + Better Auth (production)
+- `local` — SQLite + loopback auth (development only)
+
+<Info>
+  Local mode uses `sql.js` (WASM-based SQLite) with zero native dependencies. It's designed for development, not production.
+</Info>
+
+### MANIFEST_DB_PATH
+
+SQLite file path for local mode.
+
+- **Type**: String
+- **Default**: `:memory:` (in-memory database)
+
+```bash
+MANIFEST_DB_PATH=/path/to/manifest.db
+```
+
+Only used when `MANIFEST_MODE=local`.
+
+### MANIFEST_FRONTEND_DIR
+
+Custom path to frontend dist directory.
+
+- **Type**: String
+- **Default**: Auto-detected
+
+```bash
+MANIFEST_FRONTEND_DIR=/custom/path/to/frontend/dist
+```
+
+### MANIFEST_EMBEDDED
+
+Skip auto-start (used by embedded server).
+
+- **Type**: Boolean
+- **Values**: `true`, `false`
+- **Default**: `false`
+
+```bash
+MANIFEST_EMBEDDED=true
+```
+
+Prevents `bootstrap()` from running automatically. Used when Manifest is embedded in the OpenClaw plugin.
+
+### MANIFEST_TELEMETRY_OPTOUT
+
+Disable anonymous product analytics.
+
+- **Type**: Boolean
+- **Values**: `1`, `0`
+- **Default**: `0`
+
+```bash
+MANIFEST_TELEMETRY_OPTOUT=1
+```
+
+Opts out of PostHog analytics. No personally identifiable information is collected.
+
+## Example Configurations
+
+### Minimal Development
+
+```bash
+PORT=3001
+BIND_ADDRESS=127.0.0.1
+NODE_ENV=development
+BETTER_AUTH_SECRET=a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
+DATABASE_URL=postgresql://myuser:mypassword@localhost:5432/mydatabase
+API_KEY=dev-api-key-12345
+SEED_DATA=true
+```
+
+### Production (Docker)
+
+```bash
+NODE_ENV=production
+PORT=3001
+BIND_ADDRESS=0.0.0.0
+BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+DATABASE_URL=${DATABASE_URL}
+BETTER_AUTH_URL=https://manifest.example.com
+THROTTLE_TTL=60000
+THROTTLE_LIMIT=100
+MAILGUN_API_KEY=${MAILGUN_API_KEY}
+MAILGUN_DOMAIN=mg.manifest.build
+NOTIFICATION_FROM_EMAIL=noreply@manifest.build
+```
+
+### Production with OAuth
+
+```bash
+NODE_ENV=production
+PORT=3001
+BIND_ADDRESS=0.0.0.0
+BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+DATABASE_URL=${DATABASE_URL}
+BETTER_AUTH_URL=https://manifest.example.com
+
+# Email
+MAILGUN_API_KEY=${MAILGUN_API_KEY}
+MAILGUN_DOMAIN=mg.manifest.build
+NOTIFICATION_FROM_EMAIL=noreply@manifest.build
+
+# OAuth
+GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID}
+DISCORD_CLIENT_SECRET=${DISCORD_CLIENT_SECRET}
+
+# Rate limiting
+THROTTLE_TTL=60000
+THROTTLE_LIMIT=200
+
+# Telemetry opt-out
+MANIFEST_TELEMETRY_OPTOUT=1
+```
+
+## Security Best Practices
+
+### Secrets Management
+
+<Tip>
+  Use a secrets manager (AWS Secrets Manager, HashiCorp Vault, Railway secrets) instead of plain `.env` files in production.
+</Tip>
+
+**Railway:**
+
+Use the Railway dashboard to set environment variables. They're encrypted at rest.
+
+**Docker:**
+
+Use Docker secrets:
+
+```bash
+echo "my_secret" | docker secret create better_auth_secret -
+```
+
+Reference in compose:
+
+```yaml
+secrets:
+  better_auth_secret:
+    external: true
+
+services:
+  manifest:
+    secrets:
+      - better_auth_secret
+    environment:
+      BETTER_AUTH_SECRET_FILE: /run/secrets/better_auth_secret
+```
+
+### Environment File Permissions
+
+Restrict access to `.env` files:
+
+```bash
+chmod 600 packages/backend/.env
+chown manifest:manifest packages/backend/.env
+```
+
+### Rotate Secrets
+
+Rotate `BETTER_AUTH_SECRET` and `API_KEY` periodically:
+
+1. Generate new secrets
+2. Update environment variables
+3. Restart the application
+4. All existing sessions will be invalidated
+
+## Validation
+
+Verify your configuration:
+
+```bash
+node -e "console.log(require('./packages/backend/dist/config/app.config').appConfig())"
+```
+
+Check database connection:
+
+```bash
+psql $DATABASE_URL -c "SELECT version();"
+```
+
+Test health endpoint:
+
+```bash
+curl http://localhost:3001/api/v1/health
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Database Setup" icon="database" href="/advanced/self-hosting/database">
+    Configure PostgreSQL, run migrations, and set up backups
+  </Card>
+  <Card title="Deployment Guide" icon="rocket" href="/advanced/self-hosting/deployment">
+    Deploy Manifest with Docker, Railway, or manual setup
+  </Card>
+</CardGroup>

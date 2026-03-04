@@ -1,0 +1,351 @@
+---
+title: 'POST /otlp/v1/traces'
+description: 'Ingest OpenTelemetry trace spans for observability and performance monitoring'
+---
+
+## Overview
+
+The OTLP traces endpoint accepts OpenTelemetry Protocol (OTLP) trace data in protobuf or JSON format. Traces capture distributed execution flows across your agent's operations, including LLM calls, tool executions, and agent messages.
+
+## Endpoint
+
+```
+POST /otlp/v1/traces
+```
+
+## Authentication
+
+<Warning>
+This endpoint requires Bearer token authentication using an Agent API key.
+</Warning>
+
+Include your agent API key in the `Authorization` header:
+
+```bash
+Authorization: Bearer mnfst_your_agent_api_key_here
+```
+
+**How to get an API key:**
+
+1. Create an agent in the Manifest dashboard or via the API
+2. The agent API key is automatically generated with the `mnfst_` prefix
+3. Retrieve it using the [Get Agent Key](/api/agents/get-key) endpoint
+
+### Local Mode Authentication
+
+In local mode (`MANIFEST_MODE=local`), loopback connections (127.0.0.1) bypass authentication. This is useful for development with the OpenClaw plugin in dev mode.
+
+## Content Types
+
+The endpoint accepts two content types:
+
+- **`application/x-protobuf`** (recommended) - Binary protobuf format, more efficient
+- **`application/json`** - JSON format for easier debugging
+
+Set the `Content-Type` header accordingly.
+
+## Request Body
+
+The request body follows the OTLP trace specification. The top-level structure is `ExportTraceServiceRequest`.
+
+### Structure
+
+<CodeGroup>
+
+```json JSON Format
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "my-agent" } },
+          { "key": "agent.name", "value": { "stringValue": "my-agent" } }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "openclaw-instrumentation",
+            "version": "1.0.0"
+          },
+          "spans": [
+            {
+              "traceId": "5b8aa5a2d2c872e8321cf37308d69df2",
+              "spanId": "051581bf3cb55c13",
+              "parentSpanId": "5fb397be34d26b51",
+              "name": "openclaw.agent.turn",
+              "kind": 1,
+              "startTimeUnixNano": "1609459200000000000",
+              "endTimeUnixNano": "1609459201500000000",
+              "attributes": [
+                { "key": "session.id", "value": { "stringValue": "sess_abc123" } },
+                { "key": "gen_ai.request.model", "value": { "stringValue": "claude-3-5-sonnet-20241022" } },
+                { "key": "gen_ai.usage.input_tokens", "value": { "intValue": 1500 } },
+                { "key": "gen_ai.usage.output_tokens", "value": { "intValue": 300 } }
+              ],
+              "status": {
+                "code": 1
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+```typescript TypeScript Interface
+interface OtlpExportTraceServiceRequest {
+  resourceSpans: OtlpResourceSpans[];
+}
+
+interface OtlpResourceSpans {
+  resource: OtlpResource;
+  scopeSpans: OtlpScopeSpans[];
+}
+
+interface OtlpScopeSpans {
+  scope: OtlpInstrumentationScope;
+  spans: OtlpSpan[];
+}
+
+interface OtlpSpan {
+  traceId: string | Uint8Array;        // 16-byte trace ID (hex string or bytes)
+  spanId: string | Uint8Array;         // 8-byte span ID (hex string or bytes)
+  parentSpanId?: string | Uint8Array;  // Optional parent span ID
+  name: string;                         // Span name (e.g., "openclaw.agent.turn")
+  kind: number;                         // SpanKind: 0=UNSPECIFIED, 1=INTERNAL, 2=SERVER, 3=CLIENT
+  startTimeUnixNano: string;            // Start timestamp in nanoseconds
+  endTimeUnixNano: string;              // End timestamp in nanoseconds
+  attributes: OtlpKeyValue[];           // Span attributes
+  status: OtlpSpanStatus;               // Span status
+  events?: OtlpSpanEvent[];             // Optional span events
+}
+
+interface OtlpSpanStatus {
+  code: number;      // 0=UNSET, 1=OK, 2=ERROR
+  message?: string;  // Optional error message
+}
+```
+
+</CodeGroup>
+
+### Key Attributes
+
+Manifest recognizes specific span attributes to classify and enrich telemetry data:
+
+#### Resource Attributes
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `service.name` | string | Service identifier (fallback for agent name) |
+| `agent.name` | string | Agent name (overrides service.name) |
+
+#### Span Attributes for Agent Messages
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `session.id` | string | Session identifier for grouping turns |
+| `session.key` | string | Session key |
+| `gen_ai.request.model` | string | Model used for the request |
+| `gen_ai.response.model` | string | Model used in the response |
+| `gen_ai.usage.input_tokens` | int | Input tokens consumed |
+| `gen_ai.usage.output_tokens` | int | Output tokens generated |
+| `gen_ai.usage.cache_read_input_tokens` | int | Cached input tokens read |
+| `gen_ai.usage.cache_creation_input_tokens` | int | Cache creation tokens |
+| `manifest.routing.tier` | string | Routing tier used (e.g., "premium", "standard") |
+| `manifest.routing.reason` | string | Reason for routing decision |
+| `skill.name` | string | Skill name if using agent skills |
+
+#### Span Attributes for LLM Calls
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `gen_ai.system` | string | LLM provider (e.g., "anthropic", "openai") |
+| `gen_ai.request.model` | string | Requested model name |
+| `gen_ai.response.model` | string | Actual model used |
+| `gen_ai.call_index` | int | Index of this call within the turn |
+| `gen_ai.server.ttft_ms` | int | Time to first token in milliseconds |
+| `llm.request.temperature` | float | Temperature parameter |
+| `llm.request.max_tokens` | int | Max output tokens requested |
+
+#### Span Attributes for Tool Executions
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `tool.name` | string | Name of the tool executed |
+
+### Span Classification
+
+Manifest automatically classifies spans based on their name and attributes:
+
+| Span Type | Criteria |
+|-----------|----------|
+| **Agent Message** | `name` starts with `openclaw.agent.turn` or `manifest.` |
+| **Root Request** | `name` equals `openclaw.request` |
+| **LLM Call** | Has `gen_ai.system` attribute |
+| **Tool Execution** | Has `tool.name` attribute |
+
+## Response
+
+<ResponseField name="partialSuccess" type="object" required>
+  Partial success information (omitted if all spans accepted)
+  
+  <Expandable title="properties">
+    <ResponseField name="rejectedSpans" type="number">
+      Number of rejected spans (0 if all accepted)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseExample>
+```json 200 - Success
+{
+  "partialSuccess": {}
+}
+```
+
+```json 401 - Unauthorized
+{
+  "statusCode": 401,
+  "message": "Invalid API key"
+}
+```
+</ResponseExample>
+
+## Examples
+
+### cURL with JSON
+
+```bash
+curl -X POST https://manifest.build/otlp/v1/traces \
+  -H "Authorization: Bearer mnfst_your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resourceSpans": [{
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "my-agent" } }
+        ]
+      },
+      "scopeSpans": [{
+        "scope": { "name": "my-instrumentation" },
+        "spans": [{
+          "traceId": "5b8aa5a2d2c872e8321cf37308d69df2",
+          "spanId": "051581bf3cb55c13",
+          "name": "openclaw.agent.turn",
+          "kind": 1,
+          "startTimeUnixNano": "1609459200000000000",
+          "endTimeUnixNano": "1609459201500000000",
+          "attributes": [
+            { "key": "gen_ai.usage.input_tokens", "value": { "intValue": 1000 } },
+            { "key": "gen_ai.usage.output_tokens", "value": { "intValue": 200 } }
+          ],
+          "status": { "code": 1 }
+        }]
+      }]
+    }]
+  }'
+```
+
+### OpenTelemetry SDK (Node.js)
+
+```javascript
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
+import { Resource } from '@opentelemetry/resources';
+import { BasicTracerProvider } from '@opentelemetry/sdk-trace-base';
+
+const exporter = new OTLPTraceExporter({
+  url: 'https://manifest.build/otlp/v1/traces',
+  headers: {
+    'Authorization': 'Bearer mnfst_your_api_key'
+  }
+});
+
+const provider = new BasicTracerProvider({
+  resource: Resource.default().merge(new Resource({
+    'service.name': 'my-agent',
+    'agent.name': 'my-agent'
+  }))
+});
+
+provider.addSpanProcessor(new BatchSpanProcessor(exporter));
+provider.register();
+```
+
+## Protobuf Format
+
+When using `application/x-protobuf`, the request body must be a binary-encoded protobuf message following the OTLP trace specification.
+
+**Protobuf message definition:**
+
+```protobuf
+message ExportTraceServiceRequest {
+  repeated ResourceSpans resource_spans = 1;
+}
+
+message ResourceSpans {
+  Resource resource = 1;
+  repeated ScopeSpans scope_spans = 2;
+}
+
+message ScopeSpans {
+  InstrumentationScope scope = 1;
+  repeated Span spans = 2;
+}
+
+message Span {
+  bytes trace_id = 1;              // 16 bytes
+  bytes span_id = 2;               // 8 bytes
+  string trace_state = 3;
+  bytes parent_span_id = 4;        // 8 bytes
+  string name = 5;
+  SpanKind kind = 6;
+  fixed64 start_time_unix_nano = 7;
+  fixed64 end_time_unix_nano = 8;
+  repeated KeyValue attributes = 9;
+  uint32 dropped_attributes_count = 10;
+  repeated Event events = 11;
+  uint32 dropped_events_count = 12;
+  repeated Link links = 13;
+  uint32 dropped_links_count = 14;
+  Status status = 15;
+}
+```
+
+See the [OpenTelemetry Protocol Specification](https://opentelemetry.io/docs/specs/otlp/) for the complete protobuf schema.
+
+## Data Processing
+
+When traces are ingested, Manifest:
+
+1. **Decodes** the protobuf or JSON payload
+2. **Classifies** spans by type (agent message, LLM call, tool execution)
+3. **Extracts** attributes and computes derived metrics (cost, duration)
+4. **Stores** spans in the database:
+   - Agent messages → `agent_messages` table
+   - LLM calls → `llm_calls` table
+   - Tool executions → `tool_executions` table
+5. **Aggregates** token usage and costs per agent message
+6. **Emits** real-time events to connected dashboard clients via SSE
+
+## Rate Limiting
+
+OTLP endpoints use in-memory API key caching (5-minute TTL) to minimize database lookups. Each successful authentication is cached for 5 minutes.
+
+## Error Handling
+
+| Status Code | Description |
+|-------------|-------------|
+| 200 | Success (all spans accepted) |
+| 401 | Unauthorized (invalid or expired API key) |
+| 415 | Unsupported Media Type (invalid Content-Type) |
+| 500 | Internal Server Error |
+
+## See Also
+
+- [POST /otlp/v1/metrics](/api/otlp/metrics) - Ingest metrics
+- [POST /otlp/v1/logs](/api/otlp/logs) - Ingest logs
+- [OpenClaw Setup Guide](/guides/openclaw-setup) - Configure the OpenClaw plugin
+- [Observability Concepts](/concepts/observability) - Learn about observability in Manifest

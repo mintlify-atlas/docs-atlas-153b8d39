@@ -1,0 +1,227 @@
+---
+title: OpenClaw Setup Guide
+description: Complete guide to setting up Manifest with OpenClaw for LLM routing and observability
+---
+
+Manifest integrates with OpenClaw as a plugin to provide smart LLM routing and real-time observability for your AI agents. This guide walks through installation and configuration.
+
+## Installation
+
+Install the Manifest plugin using OpenClaw's plugin manager:
+
+<Steps>
+  <Step title="Install the plugin">
+    ```bash
+    openclaw plugins install manifest
+    ```
+    
+    This downloads and installs the latest version from npm.
+  </Step>
+
+  <Step title="Choose your mode">
+    Manifest supports three operating modes:
+    
+    - **Local mode** (recommended for getting started) — Embedded server with SQLite, zero configuration
+    - **Cloud mode** — Connect to Manifest Cloud with your API key
+    - **Dev mode** — Connect to a self-hosted Manifest backend
+    
+    Configure the mode:
+    
+    ```bash
+    # Local mode (default, recommended)
+    openclaw config set plugins.entries.manifest.config.mode local
+    
+    # Cloud mode (requires API key)
+    openclaw config set plugins.entries.manifest.config.mode cloud
+    openclaw config set plugins.entries.manifest.config.apiKey mnfst_YOUR_API_KEY
+    
+    # Dev mode (self-hosted)
+    openclaw config set plugins.entries.manifest.config.mode dev
+    openclaw config set plugins.entries.manifest.config.endpoint http://localhost:38238/otlp
+    ```
+  </Step>
+
+  <Step title="Restart the gateway">
+    ```bash
+    openclaw gateway restart
+    ```
+    
+    The gateway will load the plugin and start the Manifest server (in local mode) or connect to your configured endpoint.
+  </Step>
+
+  <Step title="Verify the installation">
+    Check the plugin status:
+    
+    ```bash
+    /manifest
+    ```
+    
+    This command returns:
+    - Current mode (local/cloud/dev)
+    - Endpoint reachability
+    - Auth validation status
+    - Connected agent name (if applicable)
+  </Step>
+</Steps>
+
+## Configuration Options
+
+The plugin accepts the following configuration parameters:
+
+### Mode
+
+```bash
+openclaw config set plugins.entries.manifest.config.mode <value>
+```
+
+- `local` — Runs an embedded Manifest server on your machine (SQLite database, no API key required)
+- `cloud` — Connects to Manifest Cloud (requires API key from [app.manifest.build](https://app.manifest.build))
+- `dev` — Connects to a self-hosted Manifest backend (requires endpoint URL)
+
+### API Key (cloud mode only)
+
+```bash
+openclaw config set plugins.entries.manifest.config.apiKey mnfst_YOUR_KEY
+```
+
+You can also set it via environment variable:
+
+```bash
+export MANIFEST_API_KEY=mnfst_YOUR_KEY
+```
+
+API keys must start with the `mnfst_` prefix.
+
+### Endpoint (cloud/dev mode)
+
+```bash
+openclaw config set plugins.entries.manifest.config.endpoint https://app.manifest.build/otlp
+```
+
+The OTLP endpoint where telemetry data is sent. Default for cloud mode: `https://app.manifest.build/otlp`
+
+### Port (local mode only)
+
+```bash
+openclaw config set plugins.entries.manifest.config.port 2099
+```
+
+The port where the embedded server runs. Default: `2099`
+
+### Host (local mode only)
+
+```bash
+openclaw config set plugins.entries.manifest.config.host 127.0.0.1
+```
+
+The bind address for the embedded server. Default: `127.0.0.1`
+
+## Accessing the Dashboard
+
+Once installed, access the Manifest dashboard:
+
+- **Local mode**: `http://127.0.0.1:2099` (or your configured port)
+- **Cloud mode**: `https://app.manifest.build`
+- **Dev mode**: Your self-hosted instance URL
+
+The dashboard shows:
+- Real-time message log
+- Token usage and cost analytics
+- Model routing decisions
+- Security events
+- Performance metrics
+
+## Using LLM Routing
+
+Manifest registers as an OpenAI-compatible provider in OpenClaw. To use smart routing:
+
+```bash
+# Use manifest/auto as your model
+openclaw chat --model manifest/auto "Explain quantum computing"
+```
+
+The `manifest/auto` model:
+1. Analyzes your conversation across 23 dimensions (complexity, reasoning depth, tool usage, etc.)
+2. Selects the optimal model from your configured providers
+3. Routes the request to the chosen model
+4. Records telemetry data for analytics
+
+See the [LLM Routing](/concepts/routing) documentation for details on how routing decisions are made.
+
+## Troubleshooting
+
+### Plugin not loading
+
+Check if the plugin is enabled:
+
+```bash
+openclaw plugins list
+```
+
+If Manifest shows as disabled, enable it:
+
+```bash
+openclaw plugins enable manifest
+openclaw gateway restart
+```
+
+### Port already in use (local mode)
+
+If port 2099 is occupied:
+
+```bash
+openclaw config set plugins.entries.manifest.config.port 2100
+openclaw gateway restart
+```
+
+### Connection failures
+
+Run the connection check:
+
+```bash
+/manifest
+```
+
+Look for specific error messages:
+- **"Endpoint not reachable"** — Check your network connection and endpoint URL
+- **"Auth invalid"** — Verify your API key starts with `mnfst_` and is correct
+- **"Invalid endpoint URL"** — Ensure the endpoint starts with `http://` or `https://`
+
+### Resetting configuration
+
+If the plugin gets into a bad state:
+
+```bash
+# Reset to local mode
+openclaw config set plugins.entries.manifest.config.mode local
+openclaw config set plugins.entries.manifest.config.port 2099
+
+# Force restart
+openclaw gateway restart
+```
+
+### Conflicts with diagnostics-otel
+
+Manifest uses OpenTelemetry and conflicts with OpenClaw's built-in `diagnostics-otel` plugin. If you see OTel registration errors:
+
+```bash
+openclaw plugins disable diagnostics-otel
+openclaw gateway restart
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Local Mode" icon="laptop" href="/guides/local-mode">
+    Learn about running Manifest in local mode with the embedded server
+  </Card>
+  <Card title="Cloud Mode" icon="cloud" href="/guides/cloud-mode">
+    Connect to Manifest Cloud for team collaboration
+  </Card>
+  <Card title="Multi-Agent" icon="users" href="/guides/multi-agent">
+    Organize and track multiple agents in one workspace
+  </Card>
+  <Card title="Custom Providers" icon="plug" href="/guides/custom-providers">
+    Add your own LLM provider API keys for routing
+  </Card>
+</CardGroup>

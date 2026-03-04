@@ -1,0 +1,211 @@
+---
+title: Introduction
+description: Take control of your OpenClaw costs with smart LLM routing and real-time observability
+---
+
+## What is Manifest?
+
+Manifest is an **OpenClaw plugin** that brings intelligent LLM routing and comprehensive observability to your AI agents. It intercepts every request, analyzes it through a 23-dimension scoring algorithm in under 2ms, and routes it to the most cost-effective model — cutting costs up to 70%.
+
+<Note>
+Unlike cloud proxies like OpenRouter, Manifest runs **locally on your machine**. Your prompts and responses never pass through third-party servers, and the routing logic is completely transparent and open source.
+</Note>
+
+## Why Manifest?
+
+OpenClaw sends all requests to the same model by default, which means you're summoning expensive flagship models for simple tasks. Manifest solves this by:
+
+- **Smart routing** — Analyzing each query and selecting the right model for the job
+- **Cost optimization** — Automatically choosing cheaper models when quality requirements allow
+- **Full transparency** — Open-source scoring algorithm with detailed reasoning for every decision
+
+### The Problem
+
+You ask your agent to summarize a short email. Behind the scenes, it calls GPT-5.3 at $15/million input tokens. The same model processes your complex code generation request an hour later. Both tasks hit the same expensive model, regardless of complexity.
+
+### The Solution
+
+Manifest analyzes every request across 23 dimensions:
+
+- **Message count** — How many turns in the conversation?
+- **Text complexity** — Technical jargon, code blocks, mathematical notation?
+- **Tool usage** — Are function calls involved?
+- **Momentum** — What tier did the last few requests use?
+- **Context length** — How many tokens are we processing?
+
+Based on this analysis, Manifest routes simple queries to fast, cheap models (DeepSeek-R1, Claude Haiku) and reserves expensive models (GPT-5.3, Claude Opus) for genuinely complex work.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Smart routing" icon="route">
+    23-dimension scoring algorithm routes every request to the optimal model in under 2ms, balancing cost and quality automatically.
+  </Card>
+  
+  <Card title="Real-time tracking" icon="chart-line">
+    Dashboard shows tokens, costs, and message logs as they happen. See exactly what each model is costing you.
+  </Card>
+  
+  <Card title="OTLP native" icon="cube">
+    Standard OpenTelemetry ingestion (traces, metrics, logs). Integrates with your existing observability stack.
+  </Card>
+  
+  <Card title="Privacy by design" icon="shield-check">
+    Local mode keeps all data on your machine. Cloud mode uses blind proxy architecture — we can't read your prompts.
+  </Card>
+  
+  <Card title="300+ models" icon="layer-group">
+    Supports OpenAI, Anthropic, Google, DeepSeek, xAI, Mistral, Qwen, and more. Pricing database auto-syncs daily.
+  </Card>
+  
+  <Card title="No coding required" icon="plug">
+    Install as OpenClaw plugin with 3 commands. No SDK integration, no code changes.
+  </Card>
+</CardGroup>
+
+## How It Works
+
+Manifest registers as an OpenClaw plugin and hooks into four key lifecycle events:
+
+```typescript
+// From packages/openclaw-plugin/src/hooks.ts
+message_received     // Start a new trace span
+before_agent_start   // Record initial context
+tool_result_persist  // Track tool usage
+agent_end           // Calculate costs, export telemetry
+```
+
+When your agent makes a request:
+
+<Steps>
+  <Step title="Interception">
+    The plugin hooks into `message_received` and creates an OpenTelemetry trace span for the request.
+  </Step>
+  
+  <Step title="Scoring">
+    If the model is set to `manifest/auto`, the routing engine analyzes the conversation history (last 10 messages) and assigns a tier: `fast`, `balanced`, or `premium`.
+  </Step>
+  
+  <Step title="Selection">
+    Manifest picks the cheapest available model in that tier from your configured providers. If no provider is configured for that tier, it falls back to the next tier up.
+  </Step>
+  
+  <Step title="Telemetry">
+    After the request completes, the plugin calculates token costs using its pricing database (300+ models), attaches metadata to the span, and exports everything via OTLP.
+  </Step>
+</Steps>
+
+## Local vs Cloud
+
+Manifest runs in two modes:
+
+<Tabs>
+  <Tab title="Local mode">
+    **Everything stays on your machine:**
+
+    - Embedded NestJS server with SQLite database
+    - Dashboard at `http://127.0.0.1:2099`
+    - Zero external dependencies
+    - Auto-generated API key stored in `~/.openclaw/manifest/config.json`
+
+    **Best for:**
+    - Privacy-conscious users
+    - Offline development
+    - Single-machine workflows
+
+    ```bash
+    openclaw plugins install manifest
+    openclaw config set plugins.entries.manifest.config.mode local
+    openclaw gateway restart
+    ```
+  </Tab>
+  
+  <Tab title="Cloud mode">
+    **Blind proxy architecture:**
+
+    - Dashboard hosted at [app.manifest.build](https://app.manifest.build)
+    - Only OTLP metadata sent (model, tokens, latency) — **not message content**
+    - Multi-device access
+    - Multi-agent support with team collaboration
+
+    **Best for:**
+    - Teams managing multiple agents
+    - Cross-device access
+    - Centralized cost tracking
+
+    ```bash
+    openclaw plugins install manifest
+    openclaw config set plugins.entries.manifest.config.apiKey "mnfst_YOUR_KEY"
+    openclaw gateway restart
+    ```
+
+    <Note>
+    Sign up at [app.manifest.build](https://app.manifest.build) to get your API key.
+    </Note>
+  </Tab>
+</Tabs>
+
+## Privacy Guarantee
+
+**In local mode:** Your data never leaves your machine. All telemetry, message logs, and cost calculations happen locally.
+
+**In cloud mode:** Only OpenTelemetry metadata is sent:
+
+- Model name (e.g., `gpt-5.3`)
+- Token counts (input, output, cached)
+- Latency (response time)
+- Tier (fast, balanced, premium)
+
+**What we DO NOT collect:**
+
+- Message content (prompts, responses)
+- User data or PII
+- API keys to LLM providers
+
+The blind proxy architecture means we **physically cannot read your prompts** — it's not a trust issue, it's architectural.
+
+## Comparison: Manifest vs OpenRouter
+
+| Feature | Manifest | OpenRouter |
+|---------|----------|------------|
+| **Architecture** | Runs locally — data stays on your machine | Cloud proxy — all traffic routes through their servers |
+| **Cost** | Free | 5% fee on every API call |
+| **Source code** | MIT licensed, fully open | Proprietary |
+| **Data privacy** | 100% local routing and logging (local mode) | Your prompts and responses pass through a third party |
+| **Transparency** | Open scoring algorithm — see exactly why a model is chosen | Black box routing, no visibility into decisions |
+| **Provider support** | 300+ models across 12 providers | 300+ models via proxy |
+
+## Supported Providers
+
+Manifest tracks pricing for **300+ models** across all major LLM providers:
+
+- **OpenAI** — GPT-5.3, GPT-4.1, O3, O4-mini + 54 more
+- **Anthropic** — Claude Opus 4-6, Claude Sonnet 4.5, Claude Haiku 4.5 + 14 more
+- **Google Gemini** — Gemini 2.5 Pro, Gemini 2.5 Flash, Gemini 3 Pro + 19 more
+- **DeepSeek** — DeepSeek-V3, DeepSeek-R1 + 11 more
+- **xAI** — Grok-4, Grok-3, Grok-3-mini + 8 more
+- **Mistral AI** — Mistral Large, Codestral, Devstral + 26 more
+- **Qwen (Alibaba)** — Qwen3-235b, Qwen3-coder, QwQ-32b + 42 more
+- **MiniMax, Kimi, Amazon Nova, Z.ai, OpenRouter, Ollama** — All supported
+
+Every provider supports smart routing, real-time cost tracking, and OTLP telemetry.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get Manifest running in under 2 minutes with the quickstart guide.
+  </Card>
+  
+  <Card title="Installation" icon="download" href="/installation">
+    Detailed installation instructions for both cloud and local modes.
+  </Card>
+  
+  <Card title="Routing concepts" icon="lightbulb" href="/concepts/routing">
+    Deep dive into how the 23-dimension scoring algorithm works.
+  </Card>
+  
+  <Card title="Dashboard tour" icon="chart-mixed" href="/features/dashboard">
+    Explore the real-time analytics, cost tracking, and message logs.
+  </Card>
+</CardGroup>

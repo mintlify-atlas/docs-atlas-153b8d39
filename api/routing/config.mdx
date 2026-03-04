@@ -1,0 +1,361 @@
+---
+title: 'Routing Configuration'
+description: 'Manage LLM routing configuration, providers, and tier assignments'
+api: 'GET /api/v1/routing/:agentName/status'
+---
+
+The routing configuration endpoints allow you to manage LLM providers, tier assignments, and model overrides for your agents. Manifest routes requests to the optimal model based on request complexity.
+
+## Status
+
+<ParamField path="agentName" type="string" required>
+  The agent name
+</ParamField>
+
+**Response**
+
+<ResponseField name="enabled" type="boolean">
+  Whether any active providers are configured for this agent
+</ResponseField>
+
+## Get Providers
+
+<RequestExample>
+```bash
+curl https://api.manifest.build/api/v1/routing/my-agent/providers \
+  -H "Cookie: better_auth.session_token=<token>"
+```
+</RequestExample>
+
+<ResponseExample>
+```json
+[
+  {
+    "id": "123e4567-e89b-12d3-a456-426614174000",
+    "provider": "openai",
+    "is_active": true,
+    "has_api_key": true,
+    "key_prefix": "sk-proj-",
+    "connected_at": "2026-03-01T10:30:00.000Z"
+  },
+  {
+    "id": "223e4567-e89b-12d3-a456-426614174001",
+    "provider": "anthropic",
+    "is_active": true,
+    "has_api_key": true,
+    "key_prefix": "sk-ant-a",
+    "connected_at": "2026-03-01T11:00:00.000Z"
+  }
+]
+```
+</ResponseExample>
+
+**GET** `/api/v1/routing/:agentName/providers`
+
+Returns all configured providers for an agent.
+
+<ResponseField name="id" type="string">
+  Provider configuration ID
+</ResponseField>
+
+<ResponseField name="provider" type="string">
+  Provider name (e.g., `openai`, `anthropic`, `google`, `deepseek`)
+</ResponseField>
+
+<ResponseField name="is_active" type="boolean">
+  Whether the provider is currently active
+</ResponseField>
+
+<ResponseField name="has_api_key" type="boolean">
+  Whether an API key is configured (encrypted)
+</ResponseField>
+
+<ResponseField name="key_prefix" type="string">
+  First 8 characters of the API key for identification
+</ResponseField>
+
+<ResponseField name="connected_at" type="string">
+  ISO 8601 timestamp when the provider was connected
+</ResponseField>
+
+## Connect Provider
+
+<RequestExample>
+```bash
+curl -X POST https://api.manifest.build/api/v1/routing/my-agent/providers \
+  -H "Cookie: better_auth.session_token=<token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "openai",
+    "apiKey": "sk-proj-..."
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json
+{
+  "id": "123e4567-e89b-12d3-a456-426614174000",
+  "provider": "openai",
+  "is_active": true
+}
+```
+</ResponseExample>
+
+**POST** `/api/v1/routing/:agentName/providers`
+
+Connect or update a provider for an agent. API keys are encrypted with AES-256-GCM before storage.
+
+<ParamField body="provider" type="string" required>
+  Provider name: `openai`, `anthropic`, `google`, `deepseek`, `mistral`, `xai`, `minimax`, `zai`, `ollama`, or `openrouter`
+</ParamField>
+
+<ParamField body="apiKey" type="string">
+  Provider API key. Optional for Ollama (local provider). Stored encrypted.
+</ParamField>
+
+<ResponseField name="id" type="string">
+  Provider configuration ID
+</ResponseField>
+
+<ResponseField name="provider" type="string">
+  Provider name
+</ResponseField>
+
+<ResponseField name="is_active" type="boolean">
+  Whether the provider is active
+</ResponseField>
+
+## Remove Provider
+
+<RequestExample>
+```bash
+curl -X DELETE https://api.manifest.build/api/v1/routing/my-agent/providers/openai \
+  -H "Cookie: better_auth.session_token=<token>"
+```
+</RequestExample>
+
+<ResponseExample>
+```json
+{
+  "ok": true,
+  "notifications": [
+    "gpt-4o is no longer available. Complex is back to automatic mode (claude-3-7-sonnet-20250219)."
+  ]
+}
+```
+</ResponseExample>
+
+**DELETE** `/api/v1/routing/:agentName/providers/:provider`
+
+Remove a provider. Any tier overrides using models from this provider are automatically cleared and switched back to automatic assignment.
+
+<ResponseField name="ok" type="boolean">
+  Operation success status
+</ResponseField>
+
+<ResponseField name="notifications" type="string[]">
+  Messages about tier overrides that were cleared
+</ResponseField>
+
+## Deactivate All Providers
+
+**POST** `/api/v1/routing/:agentName/providers/deactivate-all`
+
+Deactivate all providers and clear all tier overrides for an agent.
+
+## Tier Management
+
+### Get Tiers
+
+<RequestExample>
+```bash
+curl https://api.manifest.build/api/v1/routing/my-agent/tiers \
+  -H "Cookie: better_auth.session_token=<token>"
+```
+</RequestExample>
+
+<ResponseExample>
+```json
+[
+  {
+    "id": "323e4567-e89b-12d3-a456-426614174002",
+    "tier": "simple",
+    "override_model": null,
+    "auto_assigned_model": "gemini-1.5-flash-8b",
+    "user_id": "usr_123",
+    "agent_id": "agt_456"
+  },
+  {
+    "id": "423e4567-e89b-12d3-a456-426614174003",
+    "tier": "standard",
+    "override_model": null,
+    "auto_assigned_model": "gpt-4o-mini",
+    "user_id": "usr_123",
+    "agent_id": "agt_456"
+  },
+  {
+    "id": "523e4567-e89b-12d3-a456-426614174004",
+    "tier": "complex",
+    "override_model": "gpt-4o",
+    "auto_assigned_model": "gpt-4o",
+    "user_id": "usr_123",
+    "agent_id": "agt_456"
+  },
+  {
+    "id": "623e4567-e89b-12d3-a456-426614174005",
+    "tier": "reasoning",
+    "override_model": null,
+    "auto_assigned_model": "o3-mini",
+    "user_id": "usr_123",
+    "agent_id": "agt_456"
+  }
+]
+```
+</ResponseExample>
+
+**GET** `/api/v1/routing/:agentName/tiers`
+
+Get all tier assignments for an agent. Manifest uses four tiers:
+
+- **simple**: Basic queries (greetings, factual questions)
+- **standard**: General tasks (analysis, summarization)
+- **complex**: Advanced work (complex reasoning, code generation)
+- **reasoning**: Extended reasoning (o1, o3 models)
+
+<ResponseField name="id" type="string">
+  Tier assignment ID
+</ResponseField>
+
+<ResponseField name="tier" type="string">
+  Tier name: `simple`, `standard`, `complex`, or `reasoning`
+</ResponseField>
+
+<ResponseField name="override_model" type="string | null">
+  Manually set model for this tier (overrides automatic assignment)
+</ResponseField>
+
+<ResponseField name="auto_assigned_model" type="string | null">
+  Model automatically assigned based on connected providers and pricing
+</ResponseField>
+
+<ResponseField name="user_id" type="string">
+  User ID
+</ResponseField>
+
+<ResponseField name="agent_id" type="string">
+  Agent ID
+</ResponseField>
+
+### Set Override
+
+<RequestExample>
+```bash
+curl -X PUT https://api.manifest.build/api/v1/routing/my-agent/tiers/complex \
+  -H "Cookie: better_auth.session_token=<token>" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4o"}'
+```
+</RequestExample>
+
+**PUT** `/api/v1/routing/:agentName/tiers/:tier`
+
+Manually assign a model to a tier, overriding automatic assignment.
+
+<ParamField path="tier" type="string" required>
+  Tier name: `simple`, `standard`, `complex`, or `reasoning`
+</ParamField>
+
+<ParamField body="model" type="string" required>
+  Model name (must be from a connected, active provider)
+</ParamField>
+
+### Clear Override
+
+**DELETE** `/api/v1/routing/:agentName/tiers/:tier`
+
+Clear manual override and return to automatic assignment.
+
+### Reset All Overrides
+
+**POST** `/api/v1/routing/:agentName/tiers/reset-all`
+
+Clear all manual overrides for all tiers.
+
+## Available Models
+
+<RequestExample>
+```bash
+curl https://api.manifest.build/api/v1/routing/my-agent/available-models \
+  -H "Cookie: better_auth.session_token=<token>"
+```
+</RequestExample>
+
+<ResponseExample>
+```json
+[
+  {
+    "model_name": "gpt-4o",
+    "provider": "openai",
+    "input_price_per_token": 0.0000025,
+    "output_price_per_token": 0.00001,
+    "context_window": 128000,
+    "capability_reasoning": 0.95,
+    "capability_code": 0.9,
+    "quality_score": 0.95
+  },
+  {
+    "model_name": "claude-3-7-sonnet-20250219",
+    "provider": "anthropic",
+    "input_price_per_token": 0.000003,
+    "output_price_per_token": 0.000015,
+    "context_window": 200000,
+    "capability_reasoning": 0.98,
+    "capability_code": 0.95,
+    "quality_score": 0.98
+  }
+]
+```
+</ResponseExample>
+
+**GET** `/api/v1/routing/:agentName/available-models`
+
+Get all models available from connected, active providers with pricing and capability metadata.
+
+<ResponseField name="model_name" type="string">
+  Model identifier
+</ResponseField>
+
+<ResponseField name="provider" type="string">
+  Provider name
+</ResponseField>
+
+<ResponseField name="input_price_per_token" type="number">
+  Cost per input token (USD)
+</ResponseField>
+
+<ResponseField name="output_price_per_token" type="number">
+  Cost per output token (USD)
+</ResponseField>
+
+<ResponseField name="context_window" type="number">
+  Maximum context length (tokens)
+</ResponseField>
+
+<ResponseField name="capability_reasoning" type="number">
+  Reasoning capability score (0-1)
+</ResponseField>
+
+<ResponseField name="capability_code" type="number">
+  Code generation capability score (0-1)
+</ResponseField>
+
+<ResponseField name="quality_score" type="number">
+  Overall quality score (0-1)
+</ResponseField>
+
+## Ollama Sync
+
+**POST** `/api/v1/routing/ollama/sync`
+
+Sync locally available Ollama models into the model pricing database. Call this after pulling new models via `ollama pull`.

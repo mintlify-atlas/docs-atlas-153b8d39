@@ -1,0 +1,82 @@
+---
+title: Get Agent Key
+api: GET /api/v1/agents/:name/key
+---
+
+Retrieves the API key prefix for a specific agent. The full key is only shown in local mode.
+
+## Path Parameters
+
+<ParamField name="name" type="string" required>
+  The agent's slug identifier
+</ParamField>
+
+## Response
+
+<ResponseField name="keyPrefix" type="string" required>
+  The first 12 characters of the agent's API key (e.g., `mnfst_ABCDE`)
+</ResponseField>
+
+<ResponseField name="apiKey" type="string">
+  The full API key. **Only returned in local mode** (`MANIFEST_MODE=local`).
+</ResponseField>
+
+<ResponseField name="pluginEndpoint" type="string">
+  Custom OTLP endpoint URL. Only returned if `PLUGIN_OTLP_ENDPOINT` environment variable is set.
+</ResponseField>
+
+## Example Request
+
+```bash
+curl https://api.manifest.build/api/v1/agents/my-agent/key \
+  -H "Cookie: better-auth.session_token=YOUR_SESSION_TOKEN"
+```
+
+## Example Response (Cloud Mode)
+
+```json
+{
+  "keyPrefix": "mnfst_ABCDE"
+}
+```
+
+## Example Response (Local Mode)
+
+```json
+{
+  "keyPrefix": "mnfst_ABCDE",
+  "apiKey": "mnfst_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijk1234567890"
+}
+```
+
+## Example Response (With Custom Endpoint)
+
+```json
+{
+  "keyPrefix": "mnfst_ABCDE",
+  "pluginEndpoint": "http://localhost:38238/otlp"
+}
+```
+
+## Error Responses
+
+### 404 Not Found
+
+Returned when:
+- The agent doesn't exist
+- The agent doesn't belong to the authenticated user
+- No active API key exists for the agent
+
+```json
+{
+  "statusCode": 404,
+  "message": "No active API key found for this agent"
+}
+```
+
+## Notes
+
+- In cloud mode, only the key prefix is returned for security reasons
+- The key prefix is useful for identifying which key is in use without exposing the full secret
+- In local mode, the full key is shown to simplify development and testing
+- Use the `/api/v1/agents/:name/rotate-key` endpoint to generate a new key if the current one is compromised

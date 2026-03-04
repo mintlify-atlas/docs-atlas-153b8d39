@@ -1,0 +1,389 @@
+---
+title: Multi-Agent Management
+description: Organize and track multiple agents with separate configurations and telemetry
+---
+
+Manifest supports running multiple agents in a single workspace, each with isolated telemetry data, independent routing configuration, and separate API keys.
+
+## Why Multiple Agents?
+
+Use separate agents to:
+
+- **Isolate projects** — Track production vs. staging vs. development separately
+- **Separate customers** — Give each customer their own agent and bill accordingly
+- **Team organization** — Each team member gets their own agent for testing
+- **A/B testing** — Compare routing strategies or model preferences side-by-side
+- **Cost allocation** — Track costs per agent for budgeting and reporting
+
+## Agent Hierarchy
+
+Manifest uses a multi-tenant data model:
+
+```
+User Account
+  └─ Tenant (auto-created, matches user ID)
+       ├─ Agent: production (mnfst_abc...)
+       ├─ Agent: staging (mnfst_def...)
+       └─ Agent: development (mnfst_ghi...)
+```
+
+Each agent:
+- Has a unique API key (`mnfst_*`) for OTLP telemetry ingestion
+- Stores telemetry data separately (messages, tokens, costs, routing decisions)
+- Has independent routing configuration (tier assignments, provider keys)
+- Appears as a card in the workspace dashboard
+
+## Creating Agents
+
+### In Cloud Mode
+
+<Steps>
+  <Step title="Navigate to the workspace">
+    Sign in at [app.manifest.build](https://app.manifest.build). You'll see the workspace page with a grid of agents.
+  </Step>
+
+  <Step title="Create a new agent">
+    Click **+ New Agent** and enter a name:
+    
+    ```
+    production
+    ```
+    
+    Agent names must:
+    - Be unique within your tenant
+    - Use only letters, numbers, hyphens, and underscores
+    - Be between 1 and 50 characters
+  </Step>
+
+  <Step title="Get the API key">
+    After creation, click the agent card → **Settings** → **API Key**:
+    
+    ```
+    mnfst_production_a1b2c3d4...
+    ```
+    
+    Copy this key for configuration.
+  </Step>
+
+  <Step title="Configure OpenClaw to use this agent">
+    ```bash
+    openclaw config set plugins.entries.manifest.config.apiKey mnfst_production_a1b2c3d4...
+    openclaw gateway restart
+    ```
+  </Step>
+</Steps>
+
+### In Local Mode
+
+Local mode uses a single embedded server. To simulate multiple agents:
+
+1. Run separate Manifest servers on different ports:
+   ```bash
+   # Agent 1 on port 2099
+   openclaw config set plugins.entries.manifest.config.port 2099
+   
+   # Agent 2 on port 2100 (requires separate gateway instance)
+   openclaw config set plugins.entries.manifest.config.port 2100
+   ```
+
+2. Access each dashboard separately:
+   - Agent 1: `http://127.0.0.1:2099`
+   - Agent 2: `http://127.0.0.1:2100`
+
+<Info>
+  Local mode is designed for single-agent development. For true multi-agent isolation, use cloud mode.
+</Info>
+
+## Switching Between Agents
+
+To switch which agent your gateway reports to:
+
+```bash
+# Update API key to the target agent
+openclaw config set plugins.entries.manifest.config.apiKey mnfst_staging_xyz...
+
+# Restart gateway
+openclaw gateway restart
+
+# Verify connection
+/manifest
+```
+
+Expected output:
+```
+Mode: cloud
+Endpoint reachable: yes
+Auth valid: yes
+Agent: staging
+```
+
+All subsequent telemetry will be sent to the `staging` agent.
+
+## Workspace Dashboard
+
+The workspace view shows all agents in a grid:
+
+```
+┌─────────────────────────┐  ┌─────────────────────────┐
+│ production              │  │ staging                 │
+│ 2,341 messages          │  │ 487 messages            │
+│ $12.43 cost             │  │ $2.31 cost              │
+│ Last active: 2m ago     │  │ Last active: 1h ago     │
+│ [Sparkline graph]       │  │ [Sparkline graph]       │
+└─────────────────────────┘  └─────────────────────────┘
+
+┌─────────────────────────┐
+│ development             │
+│ 128 messages            │
+│ $0.42 cost              │
+│ Last active: 5d ago     │
+│ [Sparkline graph]       │
+└─────────────────────────┘
+```
+
+Click any agent card to view:
+- **Overview** — Token usage, costs, message count, model distribution
+- **Messages** — Paginated log of all LLM interactions
+- **Routing** — Tier configurations and provider keys
+- **Settings** — Rename agent, view/rotate API key, delete agent
+
+## Agent Settings
+
+Each agent has independent settings:
+
+### Rename Agent
+
+```
+Settings → Agent Name → Enter new name → Save
+```
+
+Renaming doesn't affect the API key or telemetry data.
+
+### Rotate API Key
+
+```
+Settings → API Key → Rotate API Key
+```
+
+<Warning>
+  Rotating an API key immediately invalidates the old key. Update your OpenClaw configuration before rotating.
+</Warning>
+
+After rotation:
+
+```bash
+openclaw config set plugins.entries.manifest.config.apiKey mnfst_NEW_KEY
+openclaw gateway restart
+```
+
+### Delete Agent
+
+```
+Settings → Delete Agent → Confirm
+```
+
+Deleting an agent:
+- Removes all telemetry data (messages, tokens, costs, routing decisions)
+- Invalidates the API key
+- Cannot be undone
+
+<Warning>
+  Deleting an agent is permanent. Export any data you need before deleting.
+</Warning>
+
+## Routing Configuration Per Agent
+
+Each agent has independent routing configuration:
+
+### Provider Keys
+
+Connect LLM providers separately for each agent:
+
+```
+Agent → Routing → Providers → + Add Provider
+```
+
+Example:
+- **production** agent uses your production OpenAI key
+- **staging** agent uses a separate staging key with lower rate limits
+- **development** agent uses a personal API key
+
+See [Custom Providers](/guides/custom-providers) for details.
+
+### Tier Overrides
+
+Each agent can override model assignments independently:
+
+```
+Agent → Routing → Tiers → Simple → Override Model → claude-3-5-haiku-20241022
+```
+
+Example:
+- **production** uses automatic routing (no overrides)
+- **staging** forces all requests to `gpt-4o-mini` for cost savings
+- **development** tests new models like `o1-preview` before deploying
+
+The scoring algorithm and tier assignments are per-agent.
+
+## Data Isolation
+
+All data is isolated by agent:
+
+| Data Type | Scoped By | Query Filter |
+|-----------|-----------|-------------|
+| Messages | Agent ID | `WHERE agent_id = ?` |
+| Token usage | Agent ID | `WHERE agent_id = ?` |
+| Costs | Agent ID | `WHERE agent_id = ?` |
+| Routing decisions | Agent ID | `WHERE agent_id = ?` |
+| Provider keys | Agent ID | `WHERE agent_id = ?` |
+| Tier assignments | Agent ID | `WHERE agent_id = ?` |
+
+The multi-tenant architecture ensures you only see your own agents, and agents only see their own data.
+
+## Use Cases
+
+### Production vs. Staging
+
+Separate agents for production and staging environments:
+
+```bash
+# Production gateway
+export MANIFEST_API_KEY=mnfst_production_abc...
+openclaw gateway start
+
+# Staging gateway (different machine or port)
+export MANIFEST_API_KEY=mnfst_staging_def...
+openclaw gateway start --port 8081
+```
+
+Benefits:
+- Test routing changes in staging before deploying to production
+- Compare costs and performance side-by-side
+- Separate alert rules (notify on staging failures, but not production)
+
+### Per-Customer Agents
+
+Give each customer their own agent:
+
+```
+Customer A → Agent: customer-a (mnfst_customer_a_abc...)
+Customer B → Agent: customer-b (mnfst_customer_b_def...)
+```
+
+Benefits:
+- Bill customers based on their agent's token usage
+- Isolate customer data for privacy compliance
+- Set per-customer routing policies (cheaper models for low-tier customers)
+
+### A/B Testing
+
+Create two agents with different routing strategies:
+
+```
+Agent: control → Automatic routing (default)
+Agent: experiment → Force gpt-4o for all tiers
+```
+
+Run both gateways simultaneously, split traffic 50/50, and compare:
+- Cost per message
+- Average response quality
+- Token usage efficiency
+
+After the experiment, delete the losing agent.
+
+### Team Organization
+
+Each team member gets their own agent:
+
+```
+Agent: alice-dev
+Agent: bob-dev
+Agent: charlie-dev
+```
+
+Benefits:
+- No conflicts when testing new features
+- Individual cost tracking for budgeting
+- Easy to clean up after team members leave
+
+## Best Practices
+
+### Naming Conventions
+
+Use consistent naming:
+
+```
+<environment>-<project>-<purpose>
+
+Examples:
+prod-api-gateway
+staging-chatbot-v2
+dev-alice-testing
+```
+
+### API Key Management
+
+Store API keys securely:
+
+```bash
+# Use environment variables in CI/CD
+export MANIFEST_API_KEY=mnfst_production_abc...
+
+# Use secrets managers in production
+export MANIFEST_API_KEY=$(aws secretsmanager get-secret-value --secret-id manifest-prod-key --query SecretString --output text)
+```
+
+Never commit API keys to version control.
+
+### Cost Tracking
+
+Set up notification rules per agent:
+
+```
+Agent → Notifications → + New Rule
+  Condition: Daily cost > $10
+  Action: Send email to team@company.com
+```
+
+This alerts you if an agent exceeds its budget.
+
+### Cleanup
+
+Delete unused agents to keep the workspace tidy:
+
+```
+Settings → Delete Agent
+```
+
+Consider archiving data before deletion:
+
+1. Export message logs (API endpoint: `GET /api/v1/messages?agent_name=old-agent`)
+2. Save to long-term storage (S3, database, etc.)
+3. Delete the agent
+
+## API Access
+
+The Manifest API supports multi-agent queries:
+
+```bash
+# Get messages for a specific agent
+curl https://app.manifest.build/api/v1/messages?agentName=production \
+  -H "Authorization: Bearer mnfst_production_abc..."
+
+# List all agents
+curl https://app.manifest.build/api/v1/agents \
+  -H "Authorization: Bearer mnfst_any_key..."
+```
+
+All API endpoints filter by the authenticated agent's tenant.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Custom Providers" icon="plug" href="/guides/custom-providers">
+    Add your LLM provider API keys for routing
+  </Card>
+  <Card title="Routing" icon="route" href="/concepts/routing">
+    Learn how Manifest routes requests across models
+  </Card>
+</CardGroup>

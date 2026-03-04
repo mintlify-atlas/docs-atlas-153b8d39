@@ -1,0 +1,589 @@
+---
+title: Cloud vs Local Mode
+description: Compare cloud and local deployment modes, when to use each, and architecture differences
+icon: 'server'
+---
+
+## Overview
+
+Manifest operates in two distinct modes, controlled by the `MANIFEST_MODE` environment variable:
+
+- **Local Mode**: Perfect for development, testing, and single-user scenarios
+- **Cloud Mode**: Production-ready with full authentication and multi-tenant support
+
+<Warning>
+  **Default Mode**: Cloud mode is the default. Always set `MANIFEST_MODE=local` when developing or testing locally.
+</Warning>
+
+## Mode Comparison
+
+<CardGroup cols={2}>
+  <Card title="Local Mode" icon="laptop" color="#10b981">
+    **Best for**: Development, testing, personal use  
+    **Auth**: Loopback-only (no passwords)  
+    **Database**: SQLite (zero setup)  
+    **Network**: 127.0.0.1 only
+  </Card>
+  <Card title="Cloud Mode" icon="cloud" color="#3b82f6">
+    **Best for**: Production, teams, hosted services  
+    **Auth**: Better Auth (email + OAuth)  
+    **Database**: PostgreSQL  
+    **Network**: Public internet
+  </Card>
+</CardGroup>
+
+## Feature Matrix
+
+| Feature | Local Mode | Cloud Mode |
+|---------|------------|------------|
+| **Authentication** | Loopback IP check | Better Auth (email/password + OAuth) |
+| **Database** | SQLite (in-memory or file) | PostgreSQL |
+| **User Management** | Single user (`local-user`) | Multi-user with tenants |
+| **Session Handling** | Hardcoded session | Cookie-based sessions (7-day expiry) |
+| **OAuth Providers** | ❌ Not available | ✅ Google, GitHub, Discord |
+| **Email Verification** | ❌ Not available | ✅ Mailgun integration |
+| **Password Reset** | ❌ Not available | ✅ Email-based reset |
+| **Multi-tenancy** | ❌ Single tenant | ✅ Full isolation |
+| **Network Binding** | `127.0.0.1` only | `0.0.0.0` (public) |
+| **OTLP Auth** | Loopback bypass | Bearer token validation |
+| **Dashboard Badge** | 🟠 "Dev" badge | 🟢 Normal header |
+| **Reverse Proxy Trust** | ❌ Disabled | ✅ Enabled (`trust proxy: 1`) |
+
+## Local Mode Details
+
+### Architecture
+
+Local mode is designed for **zero-configuration development**:
+
+```mermaid
+graph LR
+    A[OpenClaw Plugin] -->|127.0.0.1:38238| B[Backend Server]
+    B --> C[SQLite In-Memory]
+    D[Browser] -->|127.0.0.1:38238| B
+    B --> E[Dashboard UI]
+```
+
+### Key Characteristics
+
+#### 1. Loopback-Only Access
+
+The server only binds to `127.0.0.1` and rejects non-loopback connections:
+
+```typescript
+// packages/backend/src/auth/local-auth.guard.ts
+const LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+if (!LOOPBACK_IPS.has(clientIp)) {
+  throw new UnauthorizedException('Local mode: loopback access only');
+}
+
+request.user = {
+  id: LOCAL_USER_ID,
+  email: LOCAL_EMAIL,
+};
+```
+
+#### 2. SQLite Database
+
+No PostgreSQL required — uses `sql.js` (WASM-based SQLite):
+
+```typescript
+// packages/backend/src/database/database.module.ts
+if (isLocalMode) {
+  return {
+    type: 'sqljs',
+    database: process.env.MANIFEST_DB_PATH || ':memory:',
+    autoSave: true,
+    location: process.env.MANIFEST_DB_PATH,
+    entities: [/* ... */],
+    synchronize: false,
+    migrationsRun: true,
+  };
+}
+```
+
+<Note>
+  **Persistence**: Set `MANIFEST_DB_PATH=/path/to/manifest.db` to persist data across restarts. Omit for in-memory (fastest).
+</Note>
+
+#### 3. Hardcoded Session
+
+Simple session endpoint replaces Better Auth:
+
+```typescript
+// packages/backend/src/main.ts:63-72
+expressApp.get('/api/auth/get-session', (req, res) => {
+  if (!LOOPBACK_IPS.has(req.ip)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  res.json({
+    session: {
+      id: 'local-session',
+      userId: LOCAL_USER_ID,
+      token: 'local-token',
+      expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+    },
+    user: {
+      id: LOCAL_USER_ID,
+      name: 'Local User',
+      email: LOCAL_EMAIL,
+      emailVerified: true,
+    },
+  });
+});
+```
+
+#### 4. OTLP Loopback Bypass
+
+Plugin authentication is relaxed for local connections:
+
+```typescript
+// packages/backend/src/otlp/guards/otlp-auth.guard.ts
+const isLoopback = LOOPBACK_IPS.has(clientIp);
+const isDev = process.env.MANIFEST_MODE === 'local';
+
+if (isDev && isLoopback && apiKey && !apiKey.startsWith('mnfst_')) {
+  // Accept any non-mnfst_* token from loopback in dev mode
+  request.ingestionContext = {
+    userId: LOCAL_USER_ID,
+    tenantId: LOCAL_TENANT_ID,
+    agentId: LOCAL_AGENT_ID,
+  };
+  return true;
+}
+```
+
+The OpenClaw plugin sends `Authorization: Bearer dev-no-auth` in dev mode, which is accepted.
+
+### Setup Instructions
+
+<Steps>
+  <Step title="Build the Backend">
+    ```bash
+    cd packages/backend
+    npm run build
+    ```
+  </Step>
+  <Step title="Start in Local Mode">
+    ```bash
+    MANIFEST_MODE=local \
+    PORT=38238 \
+    BIND_ADDRESS=127.0.0.1 \
+    node -r dotenv/config dist/main.js
+    ```
+  </Step>
+  <Step title="Configure OpenClaw Plugin">
+    ```bash
+    openclaw config set plugins.entries.manifest.config.mode dev
+    openclaw config set plugins.entries.manifest.config.endpoint http://localhost:38238/otlp
+    openclaw gateway restart
+    ```
+  </Step>
+  <Step title="Access Dashboard">
+    Open `http://localhost:38238` in your browser. No login required.
+  </Step>
+</Steps>
+
+### Dev Mode Badge
+
+The dashboard shows an orange "Dev" badge in the header when running in local mode:
+
+```css
+.dev-badge {
+  background: #f59e0b;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+```
+
+## Cloud Mode Details
+
+### Architecture
+
+Cloud mode is **production-ready** with full authentication and multi-tenancy:
+
+```mermaid
+graph TB
+    A[Internet] --> B[Reverse Proxy]
+    B --> C[Backend Server]
+    C --> D[(PostgreSQL)]
+    C --> E[Better Auth]
+    E --> D
+    F[AI Gateway] -->|OTLP| C
+    G[Browser] --> B
+    B --> H[Dashboard UI]
+```
+
+### Key Characteristics
+
+#### 1. Better Auth Integration
+
+Full authentication system with email/password and OAuth:
+
+```typescript
+// packages/backend/src/auth/auth.instance.ts
+import { betterAuth } from 'better-auth';
+import { Pool } from 'pg';
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});
+
+export const auth = betterAuth({
+  database: pool,
+  emailAndPassword: {
+    enabled: true,
+    requireEmailVerification: true,
+  },
+  socialProviders: {
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    },
+    github: {
+      clientId: process.env.GITHUB_CLIENT_ID!,
+      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+    },
+    discord: {
+      clientId: process.env.DISCORD_CLIENT_ID!,
+      clientSecret: process.env.DISCORD_CLIENT_SECRET!,
+    },
+  },
+  session: {
+    expiresIn: 60 * 60 * 24 * 7, // 7 days
+  },
+});
+```
+
+#### 2. Multi-tenant Data Isolation
+
+Each user gets their own tenant:
+
+```typescript
+// packages/backend/src/analytics/services/query-helpers.ts
+export function addTenantFilter(
+  qb: SelectQueryBuilder<any>,
+  userId: string,
+): void {
+  qb.innerJoin('agents', 'a', 'a.id = entity.agent_id')
+    .innerJoin('tenants', 't', 't.id = a.tenant_id')
+    .andWhere('t.user_id = :userId', { userId });
+}
+```
+
+All analytics queries use this helper to ensure data isolation.
+
+#### 3. PostgreSQL Database
+
+Production-grade relational database:
+
+```typescript
+// packages/backend/src/database/database.module.ts
+if (!isLocalMode) {
+  return {
+    type: 'postgres',
+    url: process.env.DATABASE_URL,
+    ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : false,
+    entities: [/* ... */],
+    synchronize: false,
+    migrationsRun: true,
+    migrations: [/* version-controlled migrations */],
+  };
+}
+```
+
+#### 4. OTLP Bearer Token Auth
+
+Full API key validation:
+
+```typescript
+// packages/backend/src/otlp/guards/otlp-auth.guard.ts
+const apiKey = authHeader.replace(/^Bearer\s+/i, '');
+
+// Query database for hashed key
+const agentKey = await this.apiKeyService.validateApiKey(apiKey);
+if (!agentKey) {
+  throw new UnauthorizedException('Invalid API key');
+}
+
+// Cache for 5 minutes
+this.cache.set(apiKey, {
+  userId: agentKey.agent.tenant.userId,
+  tenantId: agentKey.agent.tenantId,
+  agentId: agentKey.agentId,
+});
+```
+
+### Setup Instructions
+
+<Steps>
+  <Step title="Set Up PostgreSQL">
+    ```bash
+    docker run -d --name postgres_db \
+      -e POSTGRES_USER=myuser \
+      -e POSTGRES_PASSWORD=mypassword \
+      -e POSTGRES_DB=manifest_prod \
+      -p 5432:5432 \
+      postgres:16
+    ```
+  </Step>
+  <Step title="Configure Environment">
+    ```bash
+    # packages/backend/.env
+    MANIFEST_MODE=cloud
+    DATABASE_URL=postgresql://myuser:mypassword@localhost:5432/manifest_prod
+    BETTER_AUTH_SECRET=$(openssl rand -hex 32)
+    BETTER_AUTH_URL=https://your-domain.com
+    API_KEY=$(openssl rand -hex 32)
+    PORT=3001
+    BIND_ADDRESS=0.0.0.0
+    NODE_ENV=production
+    
+    # Optional: OAuth providers
+    GOOGLE_CLIENT_ID=...
+    GOOGLE_CLIENT_SECRET=...
+    
+    # Optional: Email (Mailgun)
+    MAILGUN_API_KEY=...
+    MAILGUN_DOMAIN=mg.your-domain.com
+    ```
+  </Step>
+  <Step title="Build and Start">
+    ```bash
+    npm run build
+    npm start
+    ```
+  </Step>
+  <Step title="Create Admin User">
+    Navigate to `https://your-domain.com/register` and create an account.
+  </Step>
+  <Step title="Configure Plugin with API Key">
+    ```bash
+    openclaw config set plugins.entries.manifest.config.mode cloud
+    openclaw config set plugins.entries.manifest.config.endpoint https://your-domain.com/otlp
+    openclaw config set plugins.entries.manifest.config.apiKey mnfst_...
+    openclaw gateway restart
+    ```
+  </Step>
+</Steps>
+
+### Reverse Proxy Configuration
+
+When deploying behind a reverse proxy (Nginx, Caddy, Railway), enable proxy trust:
+
+```typescript
+// packages/backend/src/main.ts:54-58
+if (!isDev && process.env.MANIFEST_MODE !== 'local') {
+  expressApp.set('trust proxy', 1);
+}
+```
+
+This ensures Express sees the real client IP and protocol (important for rate limiting).
+
+#### Nginx Example
+
+```nginx
+server {
+  listen 443 ssl;
+  server_name manifest.your-domain.com;
+
+  ssl_certificate /path/to/cert.pem;
+  ssl_certificate_key /path/to/key.pem;
+
+  location / {
+    proxy_pass http://localhost:3001;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection 'upgrade';
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_cache_bypass $http_upgrade;
+  }
+}
+```
+
+## Switching Modes
+
+### Local → Cloud
+
+<Steps>
+  <Step title="Export SQLite Data (Optional)">
+    If you have valuable data in local mode, export it before switching.
+  </Step>
+  <Step title="Update Environment">
+    Change `MANIFEST_MODE=local` to `MANIFEST_MODE=cloud` and set `DATABASE_URL`.
+  </Step>
+  <Step title="Run Migrations">
+    PostgreSQL schema will be created automatically on first startup (Better Auth + Manifest tables).
+  </Step>
+  <Step title="Reconfigure Plugin">
+    Update plugin to use `mode: cloud` and provide a valid `mnfst_*` API key.
+  </Step>
+</Steps>
+
+<Warning>
+  **Data Migration**: SQLite and PostgreSQL schemas are compatible, but there's no automated migration tool. Manual data export/import is required.
+</Warning>
+
+### Cloud → Local
+
+<Steps>
+  <Step title="Change Mode">
+    Set `MANIFEST_MODE=local` and remove `DATABASE_URL`.
+  </Step>
+  <Step title="Restart Server">
+    Backend will create a new in-memory SQLite database.
+  </Step>
+  <Step title="Reconfigure Plugin">
+    Update plugin to use `mode: dev` (removes API key requirement).
+  </Step>
+</Steps>
+
+<Note>
+  Local mode starts with an empty database. Previous cloud data is not accessible.
+</Note>
+
+## Security Considerations
+
+### Local Mode Security
+
+<Warning>
+  **Local mode is NOT secure for production use.** It trusts all loopback connections without authentication.
+</Warning>
+
+- ❌ No password protection
+- ❌ No API key validation
+- ❌ No multi-user support
+- ❌ Network access limited to `127.0.0.1`
+- ✅ Safe for single-user development
+
+### Cloud Mode Security
+
+- ✅ Password hashing (Better Auth default: bcrypt)
+- ✅ API key hashing (scrypt KDF)
+- ✅ Provider key encryption (AES-256-GCM)
+- ✅ Session cookies (HttpOnly, Secure, SameSite)
+- ✅ Rate limiting (100 req/min)
+- ✅ CSRF protection (Better Auth built-in)
+- ✅ Multi-tenant data isolation
+
+## Performance Comparison
+
+| Metric | Local Mode | Cloud Mode |
+|--------|------------|------------|
+| **Database Write Latency** | Less than 1ms (in-memory) | 5-20ms (PostgreSQL) |
+| **Authentication Overhead** | ~0ms (bypass) | 10-50ms (session query) |
+| **Startup Time** | 2-3 seconds | 5-10 seconds (migrations) |
+| **Memory Usage** | 150-200 MB | 200-300 MB |
+| **Concurrent Users** | 1 | 1000s (with scaling) |
+
+## Use Case Recommendations
+
+### Choose Local Mode When:
+
+- ✅ Developing Manifest itself
+- ✅ Testing OpenClaw plugin integration
+- ✅ Running on a personal machine
+- ✅ No internet access required
+- ✅ Rapid iteration needed
+
+### Choose Cloud Mode When:
+
+- ✅ Deploying to production
+- ✅ Multiple users/teams
+- ✅ Hosted on Railway, Render, AWS, etc.
+- ✅ OAuth authentication required
+- ✅ Data persistence critical
+- ✅ Public internet access
+
+## Environment Variable Reference
+
+### Local Mode
+
+```bash
+MANIFEST_MODE=local              # Required
+PORT=38238                       # Default: 3001
+BIND_ADDRESS=127.0.0.1           # Must be loopback
+MANIFEST_DB_PATH=./manifest.db   # Optional: persist data
+MANIFEST_TELEMETRY_OPTOUT=1      # Optional: disable PostHog
+```
+
+### Cloud Mode
+
+```bash
+MANIFEST_MODE=cloud                          # Default (can omit)
+DATABASE_URL=postgresql://...                # Required
+BETTER_AUTH_SECRET=<64-char-hex>            # Required
+BETTER_AUTH_URL=https://your-domain.com      # Required
+API_KEY=<secret>                             # Required
+PORT=3001                                    # Default: 3001
+BIND_ADDRESS=0.0.0.0                         # Public access
+NODE_ENV=production                          # Recommended
+
+# Optional: OAuth
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GITHUB_CLIENT_ID=...
+GITHUB_CLIENT_SECRET=...
+DISCORD_CLIENT_ID=...
+DISCORD_CLIENT_SECRET=...
+
+# Optional: Email
+MAILGUN_API_KEY=...
+MAILGUN_DOMAIN=mg.your-domain.com
+NOTIFICATION_FROM_EMAIL=noreply@your-domain.com
+```
+
+## Troubleshooting
+
+### Local Mode Issues
+
+**Problem**: Dashboard shows 403 Forbidden
+
+**Solution**: Ensure you're accessing via `http://127.0.0.1:<PORT>`, not `localhost` or `0.0.0.0`.
+
+---
+
+**Problem**: Plugin can't connect
+
+**Solution**: Verify `mode: dev` in plugin config and endpoint matches `http://127.0.0.1:<PORT>/otlp`.
+
+---
+
+**Problem**: Data lost after restart
+
+**Solution**: Set `MANIFEST_DB_PATH` to persist SQLite database to disk.
+
+### Cloud Mode Issues
+
+**Problem**: Session expires immediately
+
+**Solution**: Check `BETTER_AUTH_URL` matches your actual domain (including `https://`).
+
+---
+
+**Problem**: OAuth callback fails
+
+**Solution**: Ensure OAuth redirect URIs in provider dashboards match `https://your-domain.com/api/auth/callback/{provider}`.
+
+---
+
+**Problem**: 502 Bad Gateway
+
+**Solution**: Verify reverse proxy is forwarding headers correctly (`X-Forwarded-Proto`, `X-Real-IP`).
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Deploy to Railway" icon="train" href="/advanced/self-hosting/deployment">
+    One-click deploy to Railway (cloud mode)
+  </Card>
+  <Card title="Local Development" icon="code" href="/advanced/development/setup">
+    Set up Manifest for local development
+  </Card>
+</CardGroup>

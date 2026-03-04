@@ -1,0 +1,264 @@
+---
+title: 'Model Resolution'
+description: 'Resolve requests to optimal models using tier-based scoring'
+api: 'POST /api/v1/routing/resolve'
+---
+
+The resolution endpoint analyzes incoming requests and determines the optimal tier and model based on request complexity, conversation context, and momentum.
+
+## Authentication
+
+This endpoint uses **Bearer token authentication** with agent API keys (format: `mnfst_*`).
+
+```bash
+curl -X POST https://api.manifest.build/api/v1/routing/resolve \
+  -H "Authorization: Bearer mnfst_xxx" \
+  -H "Content-Type: application/json" \
+  -d @request.json
+```
+
+## Request
+
+<ParamField body="messages" type="array" required>
+  Array of conversation messages in OpenAI format
+  
+  <Expandable title="Message Object">
+    <ParamField body="role" type="string" required>
+      Message role: `user`, `assistant`, `system`, or `developer`
+    </ParamField>
+    
+    <ParamField body="content" type="string | array">
+      Message content (text or multi-modal content array)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="tools" type="array">
+  Array of tool definitions (increases scoring complexity)
+</ParamField>
+
+<ParamField body="tool_choice" type="string | object">
+  Tool choice strategy: `auto`, `none`, or specific tool object
+</ParamField>
+
+<ParamField body="max_tokens" type="number">
+  Maximum tokens expected in output (influences tier scoring)
+</ParamField>
+
+<ParamField body="recentTiers" type="array">
+  Array of recent tier assignments for momentum tracking
+  
+  Values: `["simple", "standard", "complex", "reasoning"]`
+</ParamField>
+
+## Response
+
+<ResponseField name="tier" type="string">
+  Assigned tier: `simple`, `standard`, `complex`, or `reasoning`
+</ResponseField>
+
+<ResponseField name="model" type="string | null">
+  Selected model name (null if no provider configured)
+</ResponseField>
+
+<ResponseField name="provider" type="string | null">
+  Provider name (null if model not available)
+</ResponseField>
+
+<ResponseField name="confidence" type="number">
+  Scoring confidence (0-1). Low confidence (less than 0.5) may fall back to `standard`
+</ResponseField>
+
+<ResponseField name="score" type="number">
+  Raw complexity score from the scorer (can be negative for simple requests)
+</ResponseField>
+
+<ResponseField name="reason" type="string">
+  Scoring reason:
+  
+  - `scored`: Normal scoring applied
+  - `formal_logic_override`: Formal logic/math detected → reasoning tier
+  - `tool_detected`: Tools present → minimum standard tier
+  - `large_context`: More than 50k tokens → minimum complex tier
+  - `short_message`: Less than 50 chars, no tools, no momentum → simple tier
+  - `momentum`: Momentum from recent requests influenced tier
+  - `ambiguous`: Low confidence → fallback to standard
+  - `heartbeat`: Heartbeat request detected → simple tier
+</ResponseField>
+
+## Request Example
+
+<RequestExample>
+```bash Basic Query
+curl -X POST https://api.manifest.build/api/v1/routing/resolve \
+  -H "Authorization: Bearer mnfst_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is the capital of France?"
+      }
+    ]
+  }'
+```
+
+```bash Complex Task with Tools
+curl -X POST https://api.manifest.build/api/v1/routing/resolve \
+  -H "Authorization: Bearer mnfst_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {
+        "role": "user",
+        "content": "Analyze the codebase structure and refactor the authentication module"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "read_file",
+          "description": "Read file contents"
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "write_file",
+          "description": "Write file contents"
+        }
+      }
+    ],
+    "max_tokens": 4000
+  }'
+```
+
+```bash With Momentum
+curl -X POST https://api.manifest.build/api/v1/routing/resolve \
+  -H "Authorization: Bearer mnfst_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {
+        "role": "user",
+        "content": "Continue with the implementation"
+      }
+    ],
+    "recentTiers": ["complex", "complex", "standard"]
+  }'
+```
+</RequestExample>
+
+## Response Examples
+
+<ResponseExample>
+```json Simple Query
+{
+  "tier": "simple",
+  "model": "gemini-1.5-flash-8b",
+  "provider": "google",
+  "confidence": 0.9,
+  "score": -0.3,
+  "reason": "short_message"
+}
+```
+
+```json Standard Request
+{
+  "tier": "standard",
+  "model": "gpt-4o-mini",
+  "provider": "openai",
+  "confidence": 0.75,
+  "score": 0.15,
+  "reason": "scored"
+}
+```
+
+```json Complex with Tools
+{
+  "tier": "complex",
+  "model": "gpt-4o",
+  "provider": "openai",
+  "confidence": 0.85,
+  "score": 0.42,
+  "reason": "tool_detected"
+}
+```
+
+```json Reasoning Task
+{
+  "tier": "reasoning",
+  "model": "o3-mini",
+  "provider": "openai",
+  "confidence": 0.95,
+  "score": 0.5,
+  "reason": "formal_logic_override"
+}
+```
+
+```json No Provider Configured
+{
+  "tier": "standard",
+  "model": null,
+  "provider": null,
+  "confidence": 0.6,
+  "score": 0.1,
+  "reason": "scored"
+}
+```
+</ResponseExample>
+
+## Scoring Logic
+
+Manifest's scorer analyzes multiple dimensions:
+
+### Keyword Dimensions
+- **Simple indicators**: Greetings, basic questions
+- **Reasoning indicators**: Analysis, strategy, complex problem-solving
+- **Code indicators**: Implementation, debugging, refactoring
+- **Writing indicators**: Documentation, content creation
+- **Math indicators**: Calculations, equations, proofs
+
+### Structural Dimensions
+- **Token count**: Input length
+- **Nested list depth**: Task complexity
+- **Conditional logic**: Multi-step reasoning
+- **Code-to-prose ratio**: Code-heavy requests
+- **Constraint density**: Requirements and constraints
+- **Expected output length**: `max_tokens` parameter
+- **Repetition requests**: Revision/iteration keywords
+- **Tool count**: Number of available tools
+- **Conversation depth**: Number of turns
+
+### Overrides
+- **Formal logic**: Regex patterns for math/logic → reasoning tier
+- **Short messages**: Less than 50 chars → simple tier (unless momentum)
+- **Tool presence**: `tools` array with `tool_choice != "none"` → minimum standard tier
+- **Large context**: More than 50k estimated tokens → minimum complex tier
+
+### Momentum
+
+The `recentTiers` array tracks recent tier assignments within a session. Momentum prevents rapid tier oscillation and keeps the agent in the appropriate tier for multi-turn tasks.
+
+- Momentum applies when recent tiers trend higher than scored tier
+- Bypassed for clearly simple messages (e.g., short messages matching simple indicators)
+- Helps maintain context during extended complex workflows
+
+## Tier Boundaries
+
+Default scoring boundaries (configurable):
+
+- **simple**: score ≤ 0.1
+- **standard**: 0.1 < score ≤ 0.3
+- **complex**: 0.3 < score ≤ 0.45
+- **reasoning**: score > 0.45
+
+## Integration Notes
+
+- Most applications use the **proxy endpoint** (`/v1/chat/completions`) which calls resolve internally
+- Use this endpoint directly only if you need tier information before making the actual LLM request
+- The proxy applies additional optimizations:
+  - Filters out `system`/`developer` roles before scoring (prevents inflated scores)
+  - Takes only last 10 messages for scoring
+  - Detects OpenClaw heartbeats and routes to simple tier

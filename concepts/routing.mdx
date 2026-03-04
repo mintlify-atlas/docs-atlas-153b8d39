@@ -1,0 +1,350 @@
+---
+title: Routing & Scoring
+description: How Manifest's 23-dimension algorithm routes requests to optimal models
+icon: 'shuffle'
+---
+
+## Overview
+
+Manifest uses a multi-dimensional scoring algorithm to analyze incoming LLM requests and route them to the most appropriate model tier. The system evaluates 23 distinct dimensions spanning keyword analysis, structural patterns, and contextual signals.
+
+## Tier System
+
+Requests are classified into four tiers based on complexity:
+
+<CardGroup cols={2}>
+  <Card title="Simple" icon="circle" color="#10b981">
+    **Score**: < -0.10  
+    Basic questions, greetings, acknowledgments. Best for fast, cheap models.
+  </Card>
+  <Card title="Standard" icon="circle-dot" color="#3b82f6">
+    **Score**: -0.10 to 0.08  
+    Code generation, tool use, standard queries. Mid-tier models.
+  </Card>
+  <Card title="Complex" icon="bullseye" color="#f59e0b">
+    **Score**: 0.08 to 0.35  
+    Large context, nested logic, multi-step workflows. Advanced models.
+  </Card>
+  <Card title="Reasoning" icon="brain" color="#ef4444">
+    **Score**: > 0.35  
+    Formal proofs, deep analysis, complex problem-solving. Frontier models.
+  </Card>
+</CardGroup>
+
+## Scoring Algorithm
+
+### 23 Dimensions
+
+The algorithm evaluates these dimensions (source: `packages/backend/src/routing/scorer/config.ts:112-137`):
+
+#### Keyword Dimensions (14)
+
+These dimensions scan message content for specific keyword patterns:
+
+| Dimension | Weight | Direction | Purpose |
+|-----------|--------|-----------|----------|
+| **formalLogic** | 0.07 | ↑ | Detects formal proofs, theorems, mathematical reasoning |
+| **analyticalReasoning** | 0.06 | ↑ | Identifies comparison, evaluation, trade-off analysis |
+| **codeGeneration** | 0.06 | ↑ | Recognizes code creation requests |
+| **codeReview** | 0.05 | ↑ | Finds debugging, error analysis, optimization |
+| **technicalTerms** | 0.07 | ↑ | Counts technical vocabulary (kubernetes, GraphQL, etc.) |
+| **simpleIndicators** | 0.08 | ↓ | Detects basic queries ("what is", "hello", "thanks") |
+| **multiStep** | 0.07 | ↑ | Identifies sequential workflows ("first", "then", "step 1") |
+| **creative** | 0.03 | ↑ | Finds creative tasks (story, poem, brainstorm) |
+| **questionComplexity** | 0.03 | ↑ | Detects complex question structures |
+| **imperativeVerbs** | 0.02 | ↑ | Counts action verbs (build, deploy, configure) |
+| **outputFormat** | 0.02 | ↑ | Recognizes format requests (JSON, YAML, table) |
+| **domainSpecificity** | 0.05 | ↑ | Finds domain-specific terms (HIPAA, regression, genome) |
+| **agenticTasks** | 0.03 | ↑ | Identifies agent-like operations (triage, orchestrate) |
+| **relay** | 0.02 | ↓ | Detects simple forwarding ("just say", "notify") |
+
+<Note>
+  **Direction**: ↑ increases complexity score, ↓ decreases it. The `simpleIndicators` dimension is the strongest downward signal (weight 0.08).
+</Note>
+
+#### Structural Dimensions (5)
+
+Analyze message structure without keyword matching:
+
+| Dimension | Weight | Purpose |
+|-----------|--------|----------|
+| **tokenCount** | 0.05 | Longer messages suggest complexity (scoring.ts:12-19) |
+| **nestedListDepth** | 0.03 | Multi-level lists indicate structured requirements (scoring.ts:21-35) |
+| **conditionalLogic** | 0.03 | "if/then", "unless", "depending on" patterns (scoring.ts:37-63) |
+| **codeToProse** | 0.02 | Ratio of code blocks to prose text (scoring.ts:65-89) |
+| **constraintDensity** | 0.03 | Frequency of constraints ("at least", "must be") (scoring.ts:91-124) |
+
+#### Contextual Dimensions (4)
+
+Leverage request metadata:
+
+| Dimension | Weight | Purpose |
+|-----------|--------|----------|
+| **expectedOutputLength** | 0.04 | Signals like "comprehensive", high `max_tokens` (contextual.ts:15-36) |
+| **repetitionRequests** | 0.02 | Requests for multiple variations ("10 examples") (contextual.ts:38-50) |
+| **toolCount** | 0.04 | Number of available tools (contextual.ts:52-77) |
+| **conversationDepth** | 0.03 | Multi-turn conversation length (contextual.ts:79-85) |
+
+### Scoring Process
+
+<Steps>
+  <Step title="Message Filtering">
+    Strip `system` and `developer` roles (excluded from scoring to prevent system prompt inflation). Take only the last 10 user messages (source: `proxy.service.ts:15-16,87-89`).
+  </Step>
+  <Step title="Text Extraction">
+    Combine message content with position weighting (recent messages matter more).
+  </Step>
+  <Step title="Keyword Scanning">
+    Use a trie data structure to efficiently match all keywords in O(n) time.
+  </Step>
+  <Step title="Dimension Scoring">
+    - **Keyword dimensions**: Count matches, apply density bonuses, weight by message position
+    - **Structural dimensions**: Parse text for patterns (lists, conditionals, code blocks)
+    - **Contextual dimensions**: Analyze metadata (tools, max_tokens, conversation length)
+  </Step>
+  <Step title="Weighted Aggregation">
+    `rawScore = Σ(dimension.rawScore × dimension.weight)` across all 23 dimensions.
+  </Step>
+  <Step title="Momentum Application">
+    Adjust score based on recent tier history (see Momentum section below).
+  </Step>
+  <Step title="Override Rules">
+    Apply tier floors:
+    - Tool use (when `tool_choice ≠ 'none'`): min tier = Standard
+    - Large context (>50K tokens): min tier = Complex
+    - Formal logic keywords: force tier = Reasoning
+  </Step>
+  <Step title="Confidence Check">
+    If confidence < 0.45, default to Standard tier with reason = "ambiguous".
+  </Step>
+</Steps>
+
+### Example Scoring
+
+```typescript
+// Simple greeting
+Input: { messages: [{ role: "user", content: "Hello!" }] }
+Score: -0.30 | Tier: simple | Confidence: 0.90 | Reason: short_message
+
+// Code generation
+Input: { 
+  messages: [{ 
+    role: "user", 
+    content: "Write a TypeScript function to parse CSV files" 
+  }]
+}
+Score: 0.05 | Tier: standard | Confidence: 0.78 | Reason: scored
+Matched: codeGeneration(0.06), technicalTerms(0.04), imperativeVerbs(0.02)
+
+// Complex analysis
+Input: {
+  messages: [{ 
+    role: "user",
+    content: "Compare the trade-offs between microservices and monolithic architectures. Analyze latency, scalability, and operational complexity."
+  }]
+}
+Score: 0.22 | Tier: complex | Confidence: 0.85 | Reason: scored
+Matched: analyticalReasoning(0.06), technicalTerms(0.07), multiStep(0.04)
+
+// Formal proof
+Input: {
+  messages: [{ 
+    role: "user",
+    content: "Prove by induction that the sum of the first n integers is n(n+1)/2"
+  }]
+}
+Score: 0.50 | Tier: reasoning | Confidence: 0.95 | Reason: formal_logic_override
+```
+
+## Momentum System
+
+Momentum tracks recent tier assignments per session to provide continuity (source: `routing.ts:13-19,84-129`):
+
+- **Storage**: In-memory map keyed by session ID
+- **Capacity**: Last 5 tier assignments
+- **TTL**: 30 minutes of inactivity
+- **Effect**: Biases scoring toward recent tiers to maintain context
+
+### How It Works
+
+1. **Short Message Bypass**: Messages under 50 chars without tools normally default to Simple tier. With momentum, the score is adjusted upward if recent tiers suggest ongoing complex work.
+2. **Stability**: Prevents rapid tier switching in multi-turn conversations.
+3. **Cleanup**: Background timer purges stale entries every 5 minutes.
+
+```typescript
+// Example from routing.ts:53-146
+export async function resolveRouting(
+  config: ManifestConfig,
+  messages: unknown[],
+  sessionKey: string,
+  logger: PluginLogger,
+): Promise<{ tier: string; model: string; provider: string; reason: string } | null> {
+  // Get recent tiers from momentum map
+  const entry = momentum.get(sessionKey);
+  const recentTiers = entry && Date.now() - entry.lastUpdated < MOMENTUM_TTL_MS
+    ? entry.tiers
+    : undefined;
+
+  // Score with momentum
+  const resolved = await fetch(`${baseUrl}/api/v1/routing/resolve`, {
+    method: 'POST',
+    body: JSON.stringify({ messages, recentTiers })
+  });
+
+  // Update momentum with new tier
+  if (existing) {
+    existing.tiers = [data.tier, ...existing.tiers].slice(0, MOMENTUM_MAX);
+    existing.lastUpdated = Date.now();
+  }
+}
+```
+
+## Model Resolution
+
+Once a tier is determined, Manifest selects the actual model:
+
+### Tier Assignment Flow
+
+<Steps>
+  <Step title="Lookup Tier Config">
+    Query `tier_assignments` table for the agent's tier configuration (source: `resolve.service.ts:31-32`).
+  </Step>
+  <Step title="Choose Model">
+    - **Override Model**: User-specified model for the tier (takes precedence)
+    - **Auto-assigned Model**: Model selected by tier auto-assignment service
+    - **Fallback**: If neither exists, return `null` (request fails)
+  </Step>
+  <Step title="Provider Lookup">
+    Resolve provider name from `model_pricing` cache (source: `resolve.service.ts:66-72`).
+  </Step>
+  <Step title="API Key Retrieval">
+    Fetch encrypted provider API key from `user_providers` table.
+  </Step>
+</Steps>
+
+### Tier Auto-Assignment
+
+The `TierAutoAssignService` maintains optimal model selections:
+
+- **Data Source**: `model_pricing` entity with input/output costs
+- **Selection Criteria**: Balance cost and capability (lowest cost per tier)
+- **Update Frequency**: Runs on pricing sync
+- **Storage**: `tier_assignments.auto_assigned_model`
+
+## Proxy Mode
+
+Manifest can act as an OpenAI-compatible proxy for transparent routing:
+
+### Endpoint
+
+```
+POST /v1/chat/completions
+Authorization: Bearer mnfst_...
+```
+
+### Flow
+
+1. Gateway sends request to Manifest with `model: "auto"`
+2. Manifest scores messages using the 23-dimension algorithm
+3. Resolves actual model (e.g., `claude-3-5-sonnet-20241022`)
+4. Forwards to real provider with provider's API key
+5. Streams response back to gateway
+6. Records momentum for session continuity
+
+### Heartbeat Detection
+
+OpenClaw gateways send periodic heartbeat requests to keep connections alive. These contain the sentinel string `"HEARTBEAT_OK"` and are automatically routed to Simple tier without scoring (source: `proxy.service.ts:91-106`).
+
+```typescript
+const isHeartbeat = scoringMessages.some((m) => {
+  if (m.role !== 'user') return false;
+  if (typeof m.content === 'string') return m.content.includes('HEARTBEAT_OK');
+  // Also handles multi-modal content format
+});
+
+const resolved = isHeartbeat
+  ? await resolveService.resolveForTier(agentId, 'simple')
+  : await resolveService.resolve(agentId, messages, ...);
+```
+
+## Rate Limiting & Alerts
+
+### Notification Rules
+
+Set thresholds for automatic alerts:
+
+- **Metrics**: Token count, cost, message count, error rate
+- **Periods**: Hourly, daily, weekly, monthly
+- **Channels**: Email (Mailgun, Resend, SMTP)
+- **Enforcement**: Proxy checks limits before routing (returns 429 if exceeded)
+
+### Limit Check
+
+When a request arrives at the proxy:
+
+```typescript
+// Source: proxy.service.ts:58-79
+const exceeded = await this.limitCheck.checkLimits(tenantId, agentName);
+if (exceeded) {
+  throw new HttpException(
+    {
+      error: {
+        message: `Limit exceeded: ${exceeded.metricType} usage exceeds threshold`,
+        type: 'rate_limit_exceeded',
+        code: 'limit_exceeded',
+      },
+    },
+    429,
+  );
+}
+```
+
+## Performance
+
+- **Keyword Matching**: O(n) using trie data structure
+- **Scoring Latency**: Less than 10ms for typical requests
+- **Momentum Lookup**: O(1) in-memory map access
+- **Database Queries**: Cached tier assignments (5-minute TTL)
+- **Resolve Timeout**: 3 seconds (plugin-side, source: `routing.ts:20`)
+
+## Configuration
+
+The scoring algorithm is configurable via the `ScorerConfig` interface:
+
+```typescript
+// Default config: packages/backend/src/routing/scorer/config.ts:112-142
+export const DEFAULT_CONFIG: ScorerConfig = {
+  dimensions: [...], // 23 dimensions with weights
+  boundaries: { 
+    simpleMax: -0.10, 
+    standardMax: 0.08, 
+    complexMax: 0.35 
+  },
+  confidenceK: 8,
+  confidenceMidpoint: 0.15,
+  confidenceThreshold: 0.45,
+};
+```
+
+### Adjusting Thresholds
+
+To customize routing behavior, modify:
+
+- **Dimension weights**: Increase/decrease influence of specific signals
+- **Tier boundaries**: Adjust score ranges for tiers
+- **Confidence threshold**: Change ambiguity handling
+
+<Warning>
+  Changing scorer config requires backend code changes. User-configurable thresholds are planned for a future release.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configure Routing" icon="sliders" href="/features/routing-config">
+    Set up tier assignments and provider connections
+  </Card>
+  <Card title="Monitor Costs" icon="dollar-sign" href="/features/cost-tracking">
+    Track routing decisions and cost savings
+  </Card>
+</CardGroup>

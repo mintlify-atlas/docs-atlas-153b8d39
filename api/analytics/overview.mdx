@@ -1,0 +1,389 @@
+---
+title: 'Overview Analytics'
+api: 'GET /api/v1/overview'
+description: 'Retrieve comprehensive dashboard analytics including token usage, costs, messages, and recent activity'
+---
+
+## Overview
+
+The overview endpoint provides a complete snapshot of your agent's performance metrics. It returns summary statistics, timeseries data for tokens/costs/messages, cost breakdown by model, recent activity, and active skills.
+
+This endpoint intelligently switches between hourly and daily aggregations based on the selected time range, providing optimal granularity for visualization.
+
+## Authentication
+
+Requires session authentication (cookie) or API key via `X-API-Key` header.
+
+## Query Parameters
+
+<ParamField query="range" type="string" default="24h">
+  Time range for analytics. Valid values: `1h`, `6h`, `24h`, `7d`, `30d`
+  
+  - Hourly data returned for: `1h`, `6h`, `24h`
+  - Daily data returned for: `7d`, `30d`
+</ParamField>
+
+<ParamField query="agent_name" type="string">
+  Filter analytics to a specific agent. If omitted, returns data for all agents.
+</ParamField>
+
+## Response Schema
+
+<ResponseField name="summary" type="object">
+  High-level metrics for the selected time range
+  
+  <Expandable title="summary fields">
+    <ResponseField name="tokens_today" type="object">
+      Token usage summary with trend
+      
+      <Expandable title="tokens_today fields">
+        <ResponseField name="value" type="number">
+          Total tokens (input + output) in the time range
+        </ResponseField>
+        
+        <ResponseField name="trend_pct" type="number">
+          Percentage change vs. previous equivalent period. Positive = increase, negative = decrease.
+        </ResponseField>
+        
+        <ResponseField name="sub_values" type="object">
+          <Expandable title="sub_values fields">
+            <ResponseField name="input" type="number">
+              Total input tokens
+            </ResponseField>
+            
+            <ResponseField name="output" type="number">
+              Total output tokens
+            </ResponseField>
+          </Expandable>
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="cost_today" type="object">
+      Cost summary with trend
+      
+      <Expandable title="cost_today fields">
+        <ResponseField name="value" type="number">
+          Total cost in USD for the time range
+        </ResponseField>
+        
+        <ResponseField name="trend_pct" type="number">
+          Percentage change vs. previous period
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="messages" type="object">
+      Message count summary with trend
+      
+      <Expandable title="messages fields">
+        <ResponseField name="value" type="number">
+          Total message count in the time range
+        </ResponseField>
+        
+        <ResponseField name="trend_pct" type="number">
+          Percentage change vs. previous period
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="services_hit" type="object">
+      Service health tracking (not yet implemented)
+      
+      <Expandable title="services_hit fields">
+        <ResponseField name="total" type="number">
+          Total services tracked
+        </ResponseField>
+        
+        <ResponseField name="healthy" type="number">
+          Healthy services count
+        </ResponseField>
+        
+        <ResponseField name="issues" type="number">
+          Services with issues
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="token_usage" type="array">
+  Timeseries data for token usage (hourly or daily based on range)
+  
+  <Expandable title="token_usage item fields">
+    <ResponseField name="hour" type="string">
+      ISO 8601 timestamp (hourly data only). Format: `YYYY-MM-DD HH:00:00`
+    </ResponseField>
+    
+    <ResponseField name="date" type="string">
+      Date string (daily data only). Format: `YYYY-MM-DD`
+    </ResponseField>
+    
+    <ResponseField name="input_tokens" type="number">
+      Input tokens for this time bucket
+    </ResponseField>
+    
+    <ResponseField name="output_tokens" type="number">
+      Output tokens for this time bucket
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="cost_usage" type="array">
+  Timeseries data for costs (hourly or daily based on range)
+  
+  <Expandable title="cost_usage item fields">
+    <ResponseField name="hour" type="string">
+      ISO 8601 timestamp (hourly data only)
+    </ResponseField>
+    
+    <ResponseField name="date" type="string">
+      Date string (daily data only)
+    </ResponseField>
+    
+    <ResponseField name="cost" type="number">
+      Total cost in USD for this time bucket
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="message_usage" type="array">
+  Timeseries data for message counts (hourly or daily based on range)
+  
+  <Expandable title="message_usage item fields">
+    <ResponseField name="hour" type="string">
+      ISO 8601 timestamp (hourly data only)
+    </ResponseField>
+    
+    <ResponseField name="date" type="string">
+      Date string (daily data only)
+    </ResponseField>
+    
+    <ResponseField name="count" type="number">
+      Message count for this time bucket
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="cost_by_model" type="array">
+  Cost and token breakdown by model, ordered by token usage
+  
+  <Expandable title="cost_by_model item fields">
+    <ResponseField name="model" type="string">
+      Model identifier (e.g., `claude-4.5-sonnet`, `gpt-4o`)
+    </ResponseField>
+    
+    <ResponseField name="tokens" type="number">
+      Total tokens (input + output) for this model
+    </ResponseField>
+    
+    <ResponseField name="share_pct" type="number">
+      Percentage of total tokens consumed by this model (0-100, one decimal place)
+    </ResponseField>
+    
+    <ResponseField name="estimated_cost" type="number">
+      Total cost in USD for this model
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="recent_activity" type="array">
+  Last 5 messages in the time range, ordered by timestamp descending
+  
+  <Expandable title="recent_activity item fields">
+    <ResponseField name="id" type="string">
+      Message unique identifier
+    </ResponseField>
+    
+    <ResponseField name="timestamp" type="string">
+      ISO 8601 timestamp
+    </ResponseField>
+    
+    <ResponseField name="agent_name" type="string">
+      Agent that generated this message
+    </ResponseField>
+    
+    <ResponseField name="model" type="string">
+      LLM model used
+    </ResponseField>
+    
+    <ResponseField name="input_tokens" type="number">
+      Input token count
+    </ResponseField>
+    
+    <ResponseField name="output_tokens" type="number">
+      Output token count
+    </ResponseField>
+    
+    <ResponseField name="total_tokens" type="number">
+      Sum of input and output tokens
+    </ResponseField>
+    
+    <ResponseField name="cost" type="number | null">
+      Cost in USD (null if pricing unavailable)
+    </ResponseField>
+    
+    <ResponseField name="status" type="string">
+      Message status: `ok`, `error`, etc.
+    </ResponseField>
+    
+    <ResponseField name="routing_tier" type="string | null">
+      Routing tier if using LLM routing (e.g., `fast`, `smart`)
+    </ResponseField>
+    
+    <ResponseField name="routing_reason" type="string | null">
+      Reason for tier selection
+    </ResponseField>
+    
+    <ResponseField name="error_message" type="string | null">
+      Error details if status is `error`
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="active_skills" type="array">
+  Skills that were executed in the time range, ordered by run count
+  
+  <Expandable title="active_skills item fields">
+    <ResponseField name="name" type="string">
+      Skill name
+    </ResponseField>
+    
+    <ResponseField name="agent_name" type="string | null">
+      Agent that executed this skill
+    </ResponseField>
+    
+    <ResponseField name="run_count" type="number">
+      Number of executions in the time range
+    </ResponseField>
+    
+    <ResponseField name="last_active_at" type="string">
+      ISO 8601 timestamp of last execution
+    </ResponseField>
+    
+    <ResponseField name="status" type="string">
+      Always `active` for this endpoint
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="has_data" type="boolean">
+  Whether any telemetry data exists for this user/agent
+</ResponseField>
+
+## Example Request
+
+```bash cURL
+curl -X GET "https://api.manifest.build/api/v1/overview?range=24h&agent_name=my-agent" \
+  -H "X-API-Key: your-api-key"
+```
+
+## Example Response
+
+```json
+{
+  "summary": {
+    "tokens_today": {
+      "value": 125840,
+      "trend_pct": 12.5,
+      "sub_values": {
+        "input": 85000,
+        "output": 40840
+      }
+    },
+    "cost_today": {
+      "value": 0.45,
+      "trend_pct": 8.2
+    },
+    "messages": {
+      "value": 42,
+      "trend_pct": -5.0
+    },
+    "services_hit": {
+      "total": 0,
+      "healthy": 0,
+      "issues": 0
+    }
+  },
+  "token_usage": [
+    {
+      "hour": "2026-03-04 00:00:00",
+      "input_tokens": 3500,
+      "output_tokens": 1200
+    },
+    {
+      "hour": "2026-03-04 01:00:00",
+      "input_tokens": 4200,
+      "output_tokens": 1800
+    }
+  ],
+  "cost_usage": [
+    {
+      "hour": "2026-03-04 00:00:00",
+      "cost": 0.018
+    },
+    {
+      "hour": "2026-03-04 01:00:00",
+      "cost": 0.024
+    }
+  ],
+  "message_usage": [
+    {
+      "hour": "2026-03-04 00:00:00",
+      "count": 5
+    },
+    {
+      "hour": "2026-03-04 01:00:00",
+      "count": 8
+    }
+  ],
+  "cost_by_model": [
+    {
+      "model": "claude-4.5-sonnet",
+      "tokens": 95000,
+      "share_pct": 75.5,
+      "estimated_cost": 0.32
+    },
+    {
+      "model": "gpt-4o",
+      "tokens": 30840,
+      "share_pct": 24.5,
+      "estimated_cost": 0.13
+    }
+  ],
+  "recent_activity": [
+    {
+      "id": "msg_abc123",
+      "timestamp": "2026-03-04T10:30:00Z",
+      "agent_name": "my-agent",
+      "model": "claude-4.5-sonnet",
+      "input_tokens": 2500,
+      "output_tokens": 1200,
+      "total_tokens": 3700,
+      "cost": 0.015,
+      "status": "ok",
+      "routing_tier": "smart",
+      "routing_reason": "complex_task",
+      "error_message": null
+    }
+  ],
+  "active_skills": [
+    {
+      "name": "web-search",
+      "agent_name": "my-agent",
+      "run_count": 15,
+      "last_active_at": "2026-03-04T10:25:00Z",
+      "status": "active"
+    }
+  ],
+  "has_data": true
+}
+```
+
+## Notes
+
+- **Trend calculations**: Compares current period vs. previous period of equal length. For example, `24h` range compares last 24 hours vs. previous 24 hours.
+- **Hourly vs. Daily**: Ranges `1h`, `6h`, `24h` return hourly timeseries. Ranges `7d`, `30d` return daily timeseries.
+- **Caching**: Responses are cached for 5 minutes (see `DASHBOARD_CACHE_TTL_MS`).
+- **Multi-tenancy**: Data is automatically filtered by authenticated user. Users only see their own agents' data.
+- **Cost sanitization**: Negative costs (invalid pricing data) are treated as 0.

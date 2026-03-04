@@ -1,0 +1,591 @@
+---
+title: Installation
+description: Detailed installation instructions for cloud, local, and dev modes with troubleshooting
+---
+
+## Prerequisites
+
+Before installing Manifest, ensure you have:
+
+- **OpenClaw** — Version 0.5.0 or later with plugin support
+- **Node.js** — Version 18.x or later (for npm package installation)
+- **Network access** — For cloud mode, or port 2099 available for local mode
+
+<Tip>
+Check your OpenClaw version with:
+```bash
+openclaw --version
+```
+</Tip>
+
+## Installation methods
+
+Manifest supports three installation modes:
+
+<CardGroup cols={3}>
+  <Card title="Cloud mode" icon="cloud">
+    Hosted dashboard at app.manifest.build with blind proxy architecture. Best for teams and multi-device access.
+  </Card>
+  
+  <Card title="Local mode" icon="house">
+    Embedded server with SQLite database. All data stays on your machine. Best for privacy and offline use.
+  </Card>
+  
+  <Card title="Dev mode" icon="code">
+    Connect to an external backend without API key auth. Best for plugin development and testing.
+  </Card>
+</CardGroup>
+
+## Cloud mode installation
+
+Cloud mode sends only OpenTelemetry metadata (model, tokens, latency) to the hosted backend. **Message content never leaves your machine.**
+
+<Steps>
+  <Step title="Create an account">
+    Sign up at [app.manifest.build](https://app.manifest.build) to get your API key.
+
+    The hosted platform provides:
+    - Multi-device dashboard access
+    - Multi-agent support with team collaboration
+    - Automatic model pricing updates
+    - Secure credential storage with AES-256-GCM encryption
+
+    <Note>
+    Cloud mode uses Better Auth with email/password + 3 OAuth providers (Google, GitHub, Discord). Your session is valid for 30 days.
+    </Note>
+  </Step>
+
+  <Step title="Install the plugin">
+    Install Manifest from npm:
+
+    ```bash
+    openclaw plugins install manifest
+    ```
+
+    This downloads the latest version from the npm registry and registers it with OpenClaw.
+
+    **What's included:**
+    - `manifest` npm package (~1.4 MB single-file bundle)
+    - OpenTelemetry SDK (traces, metrics, logs)
+    - Smart routing engine with 23-dimension scoring
+    - Agent tools: `manifest_usage`, `manifest_costs`, `manifest_health`
+    - Embedded server (unused in cloud mode)
+
+    <Warning>
+    If you have the built-in `diagnostics-otel` plugin enabled, disable it first to avoid duplicate OpenTelemetry registration:
+
+    ```bash
+    openclaw plugins disable diagnostics-otel
+    openclaw gateway restart
+    ```
+    </Warning>
+  </Step>
+
+  <Step title="Configure your API key">
+    Copy your API key from the dashboard (starts with `mnfst_`) and set it:
+
+    ```bash
+    openclaw config set plugins.entries.manifest.config.apiKey "mnfst_YOUR_KEY"
+    ```
+
+    Alternatively, set it via environment variable:
+
+    ```bash
+    export MANIFEST_API_KEY="mnfst_YOUR_KEY"
+    ```
+
+    The plugin reads configuration in this order:
+    1. `~/.openclaw/openclaw.json` (`plugins.entries.manifest.config.apiKey`)
+    2. Environment variable `MANIFEST_API_KEY`
+
+    <Tip>
+    Store your API key in a secrets manager for production deployments. Rotate it periodically in the dashboard settings.
+    </Tip>
+  </Step>
+
+  <Step title="Restart the gateway">
+    Apply configuration changes:
+
+    ```bash
+    openclaw gateway restart
+    ```
+
+    **Expected output:**
+
+    ```bash
+    [manifest] Initializing observability pipeline...
+    [manifest]   Endpoint=https://app.manifest.build/otlp
+    [manifest] Observability pipeline active
+    [manifest] Connection verified (agent: your-agent-name)
+    [manifest] Registered as OpenAI-compatible provider (proxy mode)
+    ```
+
+    If you see errors, see the [Troubleshooting](#troubleshooting) section below.
+  </Step>
+
+  <Step title="Verify telemetry">
+    Send a test message to your agent, then check the dashboard at [app.manifest.build](https://app.manifest.build).
+
+    You should see:
+    - New message in the **Message Log**
+    - Token count updated in **Token Usage**
+    - Cost added to **Cost Tracking**
+    - Agent activity in **Overview**
+
+    <Note>
+    Telemetry is batched and exported every 5-30 seconds. New messages may take a moment to appear.
+    </Note>
+  </Step>
+</Steps>
+
+## Local mode installation
+
+Local mode runs an embedded NestJS server with SQLite database. **All data stays on your machine** — zero external dependencies.
+
+<Steps>
+  <Step title="Install the plugin">
+    Install Manifest from npm:
+
+    ```bash
+    openclaw plugins install manifest
+    ```
+
+    The embedded server is included in the npm package:
+    - `dist/server.js` — NestJS bootstrap
+    - `dist/backend/` — Compiled backend modules
+    - `public/` — Frontend dashboard assets (Vite build)
+
+    <Tip>
+    The embedded server is **the same codebase** as the cloud backend. Local mode just swaps PostgreSQL for SQLite and disables Better Auth.
+    </Tip>
+  </Step>
+
+  <Step title="Configure local mode">
+    Set the mode to `local`:
+
+    ```bash
+    openclaw config set plugins.entries.manifest.config.mode local
+    ```
+
+    Optional: Change the port or bind address:
+
+    ```bash
+    openclaw config set plugins.entries.manifest.config.port 2100
+    openclaw config set plugins.entries.manifest.config.host 0.0.0.0  # Bind to all interfaces
+    ```
+
+    **Default configuration:**
+    - `mode: local`
+    - `port: 2099`
+    - `host: 127.0.0.1` (localhost only)
+    - `dbPath: ~/.openclaw/manifest/manifest.db` (SQLite file)
+  </Step>
+
+  <Step title="Restart the gateway">
+    Apply configuration changes:
+
+    ```bash
+    openclaw gateway restart
+    ```
+
+    **Expected output:**
+
+    ```bash
+    [manifest] Local mode — starting embedded server...
+    [manifest] 🦚 View your Manifest Dashboard -> http://127.0.0.1:2099
+    [manifest] Local server running on http://127.0.0.1:2099
+    [manifest]   Dashboard: http://127.0.0.1:2099
+    [manifest]   DB: /Users/you/.openclaw/manifest/manifest.db
+    ```
+
+    The server starts automatically in the background. No separate process management needed.
+  </Step>
+
+  <Step title="Open the dashboard">
+    Visit `http://127.0.0.1:2099` in your browser.
+
+    **What you'll see:**
+    - Orange **Dev** badge in header (indicates local mode)
+    - **Overview** — Total tokens, costs, messages
+    - **Token Usage** — Input, output, cached tokens over time
+    - **Cost Tracking** — Spend per model with trend charts
+    - **Message Log** — Full conversation history with metadata
+    - **Settings** — API key rotation, agent rename, deletion
+
+    <Note>
+    The dashboard is a SolidJS SPA served via NestJS `@nestjs/serve-static`. API routes (`/api/*`, `/otlp/*`) are excluded from static file serving.
+    </Note>
+  </Step>
+
+  <Step title="(Optional) Network access via Tailscale">
+    To access the dashboard from other devices on your network, use Tailscale:
+
+    ```bash
+    tailscale serve --bg 2099
+    ```
+
+    This proxies port 2099 through your Tailscale network. Access the dashboard from any device connected to your Tailnet.
+
+    <Warning>
+    Do NOT expose port 2099 to the public internet without additional authentication. Local mode uses a simple loopback IP check for auth.
+    </Warning>
+  </Step>
+</Steps>
+
+### Local mode internals
+
+Under the hood, local mode:
+
+1. **Generates an API key** — Stored in `~/.openclaw/manifest/config.json`
+   ```json
+   {
+     "apiKey": "mnfst_local_<48-hex-chars>"
+   }
+   ```
+
+2. **Injects provider config** — Writes `manifest` provider to `~/.openclaw/openclaw.json`
+   ```json
+   {
+     "models": {
+       "providers": {
+         "manifest": {
+           "baseUrl": "http://127.0.0.1:2099/v1",
+           "api": "openai-completions",
+           "apiKey": "mnfst_local_<key>",
+           "models": [{ "id": "auto", "name": "auto" }]
+         }
+       }
+     }
+   }
+   ```
+
+3. **Starts the embedded server** — Runs in the same process as the OpenClaw gateway
+   - SQLite database at `~/.openclaw/manifest/manifest.db`
+   - TypeORM auto-runs migrations on startup
+   - Frontend served from `public/` directory
+   - OTLP endpoints at `/otlp/v1/traces`, `/otlp/v1/metrics`, `/otlp/v1/logs`
+
+4. **Bypasses auth** — In local mode, `LocalAuthGuard` trusts all loopback IPs (`127.0.0.1`, `::1`)
+
+## Dev mode installation
+
+Dev mode connects to an external backend without API key authentication. **Only use for plugin development and testing.**
+
+<Steps>
+  <Step title="Start the backend server">
+    Clone the Manifest repo and start the backend:
+
+    ```bash
+    git clone https://github.com/mnfst/manifest.git
+    cd manifest/packages/backend
+    npm install
+    npm run build
+
+    # Start in local mode (SQLite + loopback auth)
+    MANIFEST_MODE=local PORT=38238 BIND_ADDRESS=127.0.0.1 \
+      node -r dotenv/config dist/main.js
+    ```
+
+    The backend runs on `http://localhost:38238` with an orange **Dev** badge.
+  </Step>
+
+  <Step title="Install the plugin">
+    Install Manifest from local source (for development):
+
+    ```bash
+    cd ../../packages/openclaw-plugin
+    npm run build
+    openclaw plugins install -l .
+    ```
+
+    Or install from npm (for testing):
+
+    ```bash
+    openclaw plugins install manifest
+    ```
+  </Step>
+
+  <Step title="Configure dev mode">
+    Point the plugin to your local backend:
+
+    ```bash
+    openclaw config set plugins.entries.manifest.config.mode dev
+    openclaw config set plugins.entries.manifest.config.endpoint http://localhost:38238/otlp
+    ```
+
+    Dev mode sends `Authorization: Bearer dev-no-auth` to the backend. The `OtlpAuthGuard` accepts any non-`mnfst_*` token from loopback IPs in local mode.
+  </Step>
+
+  <Step title="Restart the gateway">
+    Apply configuration changes:
+
+    ```bash
+    openclaw gateway restart
+    ```
+
+    **Expected output:**
+
+    ```bash
+    [manifest] Dev mode — connecting to external server...
+    [manifest]   Dashboard: http://localhost:38238
+    [manifest] Dev mode pipeline active
+    [manifest]   Endpoint=http://localhost:38238/otlp
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+**Never use dev mode in production.** Dev mode bypasses API key authentication and should only be used for local development.
+</Warning>
+
+## Configuration reference
+
+All configuration is stored in `~/.openclaw/openclaw.json` under `plugins.entries.manifest.config`:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `mode` | `"cloud" \| "local" \| "dev"` | `"cloud"` | Determines where telemetry is sent |
+| `apiKey` | `string` | `""` | API key for cloud mode (starts with `mnfst_`) |
+| `endpoint` | `string` | `"https://app.manifest.build/otlp"` | OTLP endpoint URL |
+| `port` | `number` | `2099` | Port for local mode embedded server |
+| `host` | `string` | `"127.0.0.1"` | Bind address for local mode server |
+
+### Environment variables
+
+You can override configuration via environment variables:
+
+| Variable | Overrides | Example |
+|----------|-----------|----------|
+| `MANIFEST_API_KEY` | `apiKey` | `mnfst_abc123...` |
+| `MANIFEST_ENDPOINT` | `endpoint` | `https://custom.example.com/otlp` |
+| `MANIFEST_MODE` | `mode` | `local` |
+| `MANIFEST_TELEMETRY_OPTOUT` | Product analytics opt-out | `1` |
+
+### Example configurations
+
+<CodeGroup>
+```json Cloud mode
+{
+  "plugins": {
+    "entries": {
+      "manifest": {
+        "enabled": true,
+        "config": {
+          "mode": "cloud",
+          "apiKey": "mnfst_abc123def456..."
+        }
+      }
+    }
+  }
+}
+```
+
+```json Local mode
+{
+  "plugins": {
+    "entries": {
+      "manifest": {
+        "enabled": true,
+        "config": {
+          "mode": "local",
+          "port": 2099,
+          "host": "127.0.0.1"
+        }
+      }
+    }
+  }
+}
+```
+
+```json Dev mode
+{
+  "plugins": {
+    "entries": {
+      "manifest": {
+        "enabled": true,
+        "config": {
+          "mode": "dev",
+          "endpoint": "http://localhost:38238/otlp"
+        }
+      }
+    }
+  }
+}
+```
+</CodeGroup>
+
+## Upgrading
+
+Upgrade to the latest version:
+
+```bash
+openclaw plugins upgrade manifest
+openclaw gateway restart
+```
+
+Manifest follows semantic versioning:
+- **Patch** (0.0.x) — Bug fixes, pricing updates
+- **Minor** (0.x.0) — New features, backward-compatible changes
+- **Major** (x.0.0) — Breaking changes to config or API
+
+<Note>
+Check the [changelog](https://github.com/mnfst/manifest/releases) before upgrading to see what's new.
+</Note>
+
+## Uninstalling
+
+Remove the plugin:
+
+```bash
+openclaw plugins uninstall manifest
+openclaw gateway restart
+```
+
+**Local mode cleanup:**
+
+If you used local mode, also delete the data directory:
+
+```bash
+rm -rf ~/.openclaw/manifest
+```
+
+This removes:
+- SQLite database (`manifest.db`)
+- Local API key (`config.json`)
+- Any cached telemetry data
+
+## Troubleshooting
+
+### Plugin installation fails
+
+**Symptom:** `npm ERR!` during `openclaw plugins install manifest`
+
+**Fixes:**
+- Check Node.js version: `node --version` (must be 18.x or later)
+- Clear npm cache: `npm cache clean --force`
+- Try manual installation:
+  ```bash
+  npm install -g manifest
+  openclaw plugins link manifest
+  ```
+
+### Duplicate OTel registration error
+
+**Symptom:**
+```
+Error: @opentelemetry/api: Attempted duplicate registration of API: trace
+```
+
+**Fix:** Disable the built-in `diagnostics-otel` plugin:
+```bash
+openclaw plugins disable diagnostics-otel
+openclaw gateway restart
+```
+
+### Cloud mode: Connection check failed
+
+**Symptom:** `[manifest] Connection check failed: Unauthorized`
+
+**Fixes:**
+1. Verify API key:
+   ```bash
+   openclaw config get plugins.entries.manifest.config.apiKey
+   ```
+   Must start with `mnfst_`.
+
+2. Rotate API key in dashboard if compromised
+
+3. Check network connectivity:
+   ```bash
+   curl -I https://app.manifest.build/api/v1/health
+   ```
+
+### Local mode: Port already in use
+
+**Symptom:**
+```
+[manifest] Port 2099 is already in use by another process.
+```
+
+**Fixes:**
+1. Find the process using the port:
+   ```bash
+   lsof -i :2099
+   kill -9 <PID>
+   ```
+
+2. Or change the port:
+   ```bash
+   openclaw config set plugins.entries.manifest.config.port 2100
+   openclaw gateway restart
+   ```
+
+### Local mode: Database migration fails
+
+**Symptom:**
+```
+[manifest] Failed to start local server: QueryFailedError: ...
+```
+
+**Fix:** Delete the corrupted database and restart:
+```bash
+rm ~/.openclaw/manifest/manifest.db
+openclaw gateway restart
+```
+
+The embedded server will recreate the database with fresh migrations.
+
+### Dashboard shows no data
+
+**Symptom:** Dashboard loads but all charts are empty.
+
+**Fixes:**
+1. Send a test message to your agent
+2. Wait 30 seconds for OTLP batch export
+3. Check gateway logs for export errors:
+   ```bash
+   openclaw gateway logs | grep manifest
+   ```
+4. Verify agent is using a configured model (not `manifest/auto` without provider setup)
+
+### Routing not working
+
+**Symptom:** All requests go to the same model despite using `manifest/auto`.
+
+**Fixes:**
+1. Verify model is set:
+   ```bash
+   openclaw config get agents.defaults.model
+   ```
+   Should return `manifest/auto`.
+
+2. Check provider configuration:
+   - Cloud mode: Dashboard → **Routing** → Configure provider keys
+   - Local mode: Dashboard → **Routing** → Configure provider keys
+
+3. Ensure at least one provider key is set for each tier (fast, balanced, premium)
+
+4. Check gateway logs for routing resolution:
+   ```bash
+   openclaw gateway logs | grep "Routing resolved"
+   ```
+
+### Need more help?
+
+<CardGroup cols={2}>
+  <Card title="Discord community" icon="discord" href="https://discord.gg/FepAked3W7">
+    Get live support from the team and community members.
+  </Card>
+  
+  <Card title="GitHub issues" icon="github" href="https://github.com/mnfst/manifest/issues">
+    Report bugs, request features, and search existing issues.
+  </Card>
+  
+  <Card title="Discussions" icon="comments" href="https://github.com/mnfst/manifest/discussions">
+    Ask questions and share feedback with the community.
+  </Card>
+  
+  <Card title="Contributing guide" icon="code-pull-request" href="/advanced/development/contributing">
+    Learn how to contribute code, tests, and documentation.
+  </Card>
+</CardGroup>

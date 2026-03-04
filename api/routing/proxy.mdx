@@ -1,0 +1,449 @@
+---
+title: 'OpenAI-Compatible Proxy'
+description: 'Route LLM requests through Manifest with automatic model selection'
+api: 'POST /v1/chat/completions'
+---
+
+The Manifest proxy provides an OpenAI-compatible endpoint that automatically routes requests to the optimal model based on complexity scoring. Point your LLM client to Manifest instead of the provider's API.
+
+## Authentication
+
+Use **Bearer token authentication** with your agent API key (format: `mnfst_*`).
+
+```bash
+curl -X POST https://api.manifest.build/v1/chat/completions \
+  -H "Authorization: Bearer mnfst_xxx" \
+  -H "Content-Type: application/json" \
+  -d @request.json
+```
+
+## OpenAI Compatibility
+
+The proxy accepts **standard OpenAI Chat Completions API** requests and returns OpenAI-format responses. Compatible with:
+
+- OpenAI SDKs (Python, Node.js, Go, etc.)
+- LangChain, LlamaIndex
+- OpenClaw, Cursor, Windsurf, Continue
+- Any tool supporting OpenAI-compatible APIs
+
+## Request Format
+
+<ParamField body="messages" type="array" required>
+  Array of conversation messages
+  
+  <Expandable title="Message Object">
+    <ParamField body="role" type="string" required>
+      `system`, `user`, `assistant`, or `developer`
+    </ParamField>
+    
+    <ParamField body="content" type="string | array">
+      Message content (text string or multi-modal content array)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="stream" type="boolean" default="false">
+  Enable streaming responses (Server-Sent Events)
+</ParamField>
+
+<ParamField body="max_tokens" type="number">
+  Maximum tokens in response (influences tier scoring)
+</ParamField>
+
+<ParamField body="temperature" type="number">
+  Sampling temperature (forwarded to provider)
+</ParamField>
+
+<ParamField body="top_p" type="number">
+  Nucleus sampling (forwarded to provider)
+</ParamField>
+
+<ParamField body="tools" type="array">
+  Function calling tools (OpenAI format)
+</ParamField>
+
+<ParamField body="tool_choice" type="string | object">
+  Tool choice strategy: `auto`, `none`, or specific tool
+</ParamField>
+
+<ParamField body="response_format" type="object">
+  Response format (e.g., JSON mode)
+</ParamField>
+
+<ParamField header="X-Session-Key" type="string">
+  Session identifier for momentum tracking (optional, defaults to `"default"`)
+</ParamField>
+
+<ParamField header="traceparent" type="string">
+  W3C trace context for distributed tracing (optional)
+</ParamField>
+
+## Response Format
+
+Standard OpenAI Chat Completions response with additional Manifest headers.
+
+### Response Headers
+
+<ResponseField name="X-Manifest-Tier" type="string">
+  Assigned tier: `simple`, `standard`, `complex`, or `reasoning`
+</ResponseField>
+
+<ResponseField name="X-Manifest-Model" type="string">
+  Selected model name
+</ResponseField>
+
+<ResponseField name="X-Manifest-Provider" type="string">
+  Provider name
+</ResponseField>
+
+<ResponseField name="X-Manifest-Confidence" type="string">
+  Scoring confidence (0-1)
+</ResponseField>
+
+<ResponseField name="X-Manifest-Reason" type="string">
+  Scoring reason (see resolve endpoint for values)
+</ResponseField>
+
+### Response Body
+
+<ResponseField name="id" type="string">
+  Completion ID (from provider)
+</ResponseField>
+
+<ResponseField name="object" type="string">
+  Always `"chat.completion"` (or `"chat.completion.chunk"` for streaming)
+</ResponseField>
+
+<ResponseField name="created" type="number">
+  Unix timestamp
+</ResponseField>
+
+<ResponseField name="model" type="string">
+  Model name used
+</ResponseField>
+
+<ResponseField name="choices" type="array">
+  Array of completion choices
+  
+  <Expandable title="Choice Object">
+    <ResponseField name="index" type="number">
+      Choice index (usually 0)
+    </ResponseField>
+    
+    <ResponseField name="message" type="object">
+      <Expandable title="Message Object">
+        <ResponseField name="role" type="string">
+          Always `"assistant"`
+        </ResponseField>
+        
+        <ResponseField name="content" type="string | null">
+          Response content (null if tool calls)
+        </ResponseField>
+        
+        <ResponseField name="tool_calls" type="array">
+          Tool calls requested by model
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="finish_reason" type="string">
+      `stop`, `length`, `tool_calls`, or `content_filter`
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="usage" type="object">
+  <Expandable title="Usage Object">
+    <ResponseField name="prompt_tokens" type="number">
+      Input tokens consumed
+    </ResponseField>
+    
+    <ResponseField name="completion_tokens" type="number">
+      Output tokens generated
+    </ResponseField>
+    
+    <ResponseField name="total_tokens" type="number">
+      Total tokens (prompt + completion)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Examples
+
+<RequestExample>
+```bash Basic Request
+curl -X POST https://api.manifest.build/v1/chat/completions \
+  -H "Authorization: Bearer mnfst_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {"role": "user", "content": "Explain quantum entanglement"}
+    ]
+  }'
+```
+
+```bash Streaming
+curl -X POST https://api.manifest.build/v1/chat/completions \
+  -H "Authorization: Bearer mnfst_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {"role": "user", "content": "Write a Python function to reverse a string"}
+    ],
+    "stream": true
+  }'
+```
+
+```bash With Tools
+curl -X POST https://api.manifest.build/v1/chat/completions \
+  -H "Authorization: Bearer mnfst_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {"role": "user", "content": "What is the weather in Paris?"}
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get current weather",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "location": {"type": "string"}
+            },
+            "required": ["location"]
+          }
+        }
+      }
+    ]
+  }'
+```
+
+```bash Session Tracking
+curl -X POST https://api.manifest.build/v1/chat/completions \
+  -H "Authorization: Bearer mnfst_xxx" \
+  -H "X-Session-Key: session-abc-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {"role": "user", "content": "Continue refactoring"}
+    ]
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json Non-Streaming Response
+{
+  "id": "chatcmpl-abc123",
+  "object": "chat.completion",
+  "created": 1735689600,
+  "model": "gpt-4o-mini",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Quantum entanglement is a phenomenon where two or more particles become correlated..."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 15,
+    "completion_tokens": 120,
+    "total_tokens": 135
+  }
+}
+```
+
+```text Streaming Response (SSE)
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1735689600,"model":"gpt-4o-mini","choices":[{"index":0,"delta":{"role":"assistant","content":"Quantum"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1735689600,"model":"gpt-4o-mini","choices":[{"index":0,"delta":{"content":" entanglement"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1735689600,"model":"gpt-4o-mini","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+```
+</ResponseExample>
+
+## SDK Integration
+
+### Python (OpenAI SDK)
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://api.manifest.build/v1",
+    api_key="mnfst_xxx"
+)
+
+response = client.chat.completions.create(
+    model="gpt-4o-mini",  # Ignored - Manifest selects model
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+
+print(response.choices[0].message.content)
+print(f"Tier: {response._raw_response.headers['X-Manifest-Tier']}")
+print(f"Model: {response._raw_response.headers['X-Manifest-Model']}")
+```
+
+### Node.js (OpenAI SDK)
+
+```javascript
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'https://api.manifest.build/v1',
+  apiKey: 'mnfst_xxx'
+});
+
+const response = await client.chat.completions.create({
+  model: 'gpt-4o-mini',  // Ignored - Manifest selects model
+  messages: [{role: 'user', content: 'Hello!'}]
+});
+
+console.log(response.choices[0].message.content);
+```
+
+### OpenClaw Configuration
+
+```bash
+# Set Manifest as the proxy endpoint
+openclaw config set plugins.entries.manifest.config.mode prod
+openclaw config set plugins.entries.manifest.config.endpoint https://api.manifest.build/otlp
+openclaw config set plugins.entries.manifest.config.apiKey mnfst_xxx
+
+# Restart gateway
+openclaw gateway restart
+```
+
+## Provider Format Translation
+
+Manifest automatically translates between OpenAI format and provider-native formats:
+
+### Google Gemini
+
+- Translates OpenAI `messages` → Gemini `contents` format
+- Converts OpenAI streaming chunks → SSE format
+- Maps `system` role → Gemini system instructions
+
+### Anthropic Claude
+
+- Translates OpenAI format → Anthropic Messages API
+- Extracts `system` messages into Anthropic's `system` parameter
+- Converts streaming SSE events to OpenAI format
+- Tracks usage across message delta events
+
+### OpenRouter
+
+- Injects `cache_control` for Anthropic models
+- Passes OpenAI format directly for OpenAI models
+
+### Other Providers
+
+DeepSeek, Mistral, xAI, MiniMax, Z.AI, and Ollama all use OpenAI-compatible APIs and pass through directly.
+
+## Rate Limiting
+
+- **Per-user concurrent request limit**: 10 requests
+- **429 responses**: Recorded once per minute per agent (prevents log spam)
+- **Limit exceeded**: Returns 429 with message describing threshold
+
+Notification rules can alert on rate limit events.
+
+## Error Handling
+
+<ResponseExample>
+```json No Provider Configured
+{
+  "error": {
+    "message": "No model available. Connect a provider in the Manifest dashboard.",
+    "type": "proxy_error"
+  }
+}
+```
+
+```json Missing API Key
+{
+  "error": {
+    "message": "No API key found for provider: openai. Re-connect the provider with an API key.",
+    "type": "proxy_error"
+  }
+}
+```
+
+```json Rate Limit Exceeded
+{
+  "error": {
+    "message": "Limit exceeded: cost usage ($125.50) exceeds $100.00 per day",
+    "type": "rate_limit_exceeded",
+    "code": "limit_exceeded"
+  }
+}
+```
+
+```json Provider Error (Passthrough)
+{
+  "error": {
+    "message": "Rate limit reached for requests",
+    "type": "requests",
+    "param": null,
+    "code": "rate_limit_exceeded"
+  }
+}
+```
+</ResponseExample>
+
+Provider errors (4xx/5xx) are passed through with original status codes and headers.
+
+## Observability
+
+### OTLP Integration
+
+Manifest automatically records all proxy requests as agent messages with:
+
+- Request/response tokens and costs
+- Model, tier, and provider metadata
+- Error messages and rate limit events
+- Trace IDs from `traceparent` header
+
+View all data in the Manifest dashboard.
+
+### Session Momentum
+
+Use `X-Session-Key` header to group related requests:
+
+```bash
+curl -X POST https://api.manifest.build/v1/chat/completions \
+  -H "Authorization: Bearer mnfst_xxx" \
+  -H "X-Session-Key: user-123-conversation-456" \
+  ...
+```
+
+Manifest tracks recent tier assignments per session (in-memory, 10k session limit) and applies momentum to prevent tier oscillation during multi-turn tasks.
+
+### Distributed Tracing
+
+Pass W3C `traceparent` header to correlate proxy requests with your application traces:
+
+```bash
+curl -X POST https://api.manifest.build/v1/chat/completions \
+  -H "Authorization: Bearer mnfst_xxx" \
+  -H "traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" \
+  ...
+```
+
+The trace ID is extracted and stored with the agent message record.
+
+## Performance Notes
+
+- **Timeout**: 180 seconds (3 minutes)
+- **Scoring optimization**: System/developer messages filtered before scoring
+- **Heartbeat detection**: OpenClaw heartbeats (`HEARTBEAT_OK`) bypass scoring → simple tier
+- **Concurrent requests**: Up to 10 per user
+- **Provider failover**: Not implemented (single provider per request)

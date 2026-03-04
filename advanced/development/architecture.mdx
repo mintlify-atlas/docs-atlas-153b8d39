@@ -1,0 +1,282 @@
+---
+title: Technical Architecture
+description: Understand Manifest's technical architecture, codebase structure, and key design decisions
+---
+
+## Technology Stack
+
+### Backend
+
+- **Framework**: NestJS 11
+- **Database**: PostgreSQL 16 (cloud) / sql.js (local)
+- **ORM**: TypeORM 0.3
+- **Authentication**: Better Auth (email/password + OAuth)
+- **Validation**: class-validator + class-transformer
+- **Security**: Helmet (CSP enforcement)
+- **Runtime**: Node.js 22.x, TypeScript 5.x (strict mode)
+
+### Frontend
+
+- **Framework**: SolidJS
+- **Build Tool**: Vite
+- **Charts**: uPlot (time-series visualization)
+- **Auth Client**: Better Auth SolidJS client
+- **Styling**: Custom CSS theme
+
+### Monorepo
+
+- **Package Manager**: npm workspaces
+- **Build System**: Turborepo
+- **Version Management**: Changesets
+
+## Project Structure
+
+```text
+packages/
+├── backend/               # NestJS API server
+│   ├── src/
+│   │   ├── main.ts        # Bootstrap: Helmet, ValidationPipe, CORS
+│   │   ├── app.module.ts  # Root module (guards: ApiKey, Session, Throttler)
+│   │   ├── config/        # Environment variable configuration
+│   │   ├── auth/          # Better Auth + SessionGuard
+│   │   ├── database/      # TypeORM config, migrations, seeders
+│   │   ├── entities/      # TypeORM entities (19 files)
+│   │   ├── common/        # Guards, decorators, DTOs, utilities
+│   │   ├── analytics/     # Dashboard queries (overview, tokens, costs)
+│   │   ├── telemetry/     # JSON telemetry ingestion
+│   │   ├── otlp/          # OTLP ingestion (traces, metrics, logs)
+│   │   ├── routing/       # LLM routing (providers, tiers, proxy)
+│   │   ├── model-prices/  # Model pricing management
+│   │   ├── notifications/ # Alert rules + email providers
+│   │   ├── security/      # Security score + events
+│   │   ├── sse/           # Server-Sent Events
+│   │   ├── github/        # GitHub stars endpoint
+│   │   └── health/        # Health check
+│   └── test/              # E2E tests (Supertest)
+│
+├── frontend/              # SolidJS single-page app
+│   ├── src/
+│   │   ├── index.tsx      # Router setup
+│   │   ├── components/    # Shared UI components
+│   │   ├── pages/         # Route components (Login, Workspace, Overview, etc.)
+│   │   ├── services/      # API client, auth client, formatters
+│   │   └── styles/        # Custom CSS theme
+│   └── tests/             # Vitest tests
+│
+└── openclaw-plugin/       # OpenClaw observability plugin
+    ├── src/               # Plugin source (TypeScript)
+    └── dist/              # Built plugin (esbuild, zero runtime deps)
+```
+
+## Key Design Decisions
+
+### Single-Service Deployment
+
+In production, Manifest deploys as a **single service**. NestJS serves both:
+- **API routes** (`/api/*`, `/otlp/*`, `/v1/*`)
+- **Frontend static files** (via `@nestjs/serve-static` with SPA fallback)
+
+Dev mode uses **Vite on :3000** proxying API/OTLP requests to the backend on :3001.
+
+### Multi-Tenancy Model
+
+```text
+User (Better Auth) ──→ Tenant ──→ Agent ──→ AgentApiKey (mnfst_*)
+                                    │
+                                    └──→ agent_messages (telemetry data)
+```
+
+- **Tenant**: Created automatically from `user.id` on first agent creation
+- **Agent**: Belongs to a tenant (unique constraint: `[tenant_id, name]`)
+- **AgentApiKey**: One-to-one with agent. Used for OTLP ingestion.
+- **Data isolation**: All analytics queries filter by user via `addTenantFilter(qb, userId)`
+
+### Authentication Architecture
+
+#### Guard Chain
+
+Three global guards run on every request (order matters):
+
+1. **SessionGuard** (`auth/session.guard.ts`)
+   - Checks `@Public()` decorator first
+   - Validates Better Auth cookie session via `auth.api.getSession()`
+   - Attaches `request.user` and `request.session`
+
+2. **ApiKeyGuard** (`common/guards/api-key.guard.ts`)
+   - Falls through if session already set
+   - Checks `X-API-Key` header (timing-safe compare)
+   - Use `@Public()` to skip both guards
+
+3. **ThrottlerGuard**
+   - Rate limiting (configurable via `THROTTLE_TTL` and `THROTTLE_LIMIT`)
+
+#### Better Auth Setup
+
+- **Instance**: `auth/auth.instance.ts` — `betterAuth()` with `emailAndPassword` + 3 OAuth providers (Google, GitHub, Discord)
+- **Mounting**: In `main.ts`, Better Auth is mounted as Express middleware at `/api/auth/*splat` **before** `express.json()` (needs raw body control)
+- **Frontend client**: `services/auth-client.ts` — `createAuthClient()` from `better-auth/solid`
+- **Social login**: OAuth callback URLs point to `:3001`. Social login only works on port **3001** (production build), not Vite's `:3000` dev server.
+
+### Database Strategy
+
+#### Schema Management
+
+- **Migrations**: TypeORM migrations run automatically on startup (`migrationsRun: true`)
+- **Schema sync**: Permanently disabled (`synchronize: false`) — all schema changes go through migrations
+- **Migration CLI**: `src/database/datasource.ts` provides the DataSource for CLI commands
+
+#### Dual Database Support
+
+| Mode | Database | Use Case |
+|------|----------|----------|
+| **Cloud** | PostgreSQL 16 | Production, full authentication |
+| **Local** | sql.js (WASM SQLite) | Development, zero external dependencies |
+
+- **Local mode**: Uses `sql.js` with `autoSave: true` for file persistence. Better Auth is skipped entirely — `LocalAuthGuard` handles auth via loopback IP check.
+- **Cloud mode**: Uses a `pg.Pool` instance passed to Better Auth. All social OAuth providers activate when both `CLIENT_ID` and `CLIENT_SECRET` env vars are set.
+
+### Body Parsing
+
+Body parsing is **disabled at the NestJS level** (`bodyParser: false`).
+
+- **Better Auth** is mounted first (needs raw body control)
+- Then `express.json()` and `express.raw()` are added for:
+  - Standard JSON endpoints
+  - OTLP protobuf ingestion
+
+### QueryBuilder API
+
+Analytics and ingestion services use **TypeORM `Repository.createQueryBuilder()`** instead of raw SQL.
+
+- The `addTenantFilter(qb, userId)` helper in `query-helpers.ts` applies multi-tenant WHERE clauses
+- Only the database seeder and notification cron use `DataSource.query()` with numbered placeholders (`$1, $2, ...`)
+
+### Content Security Policy (CSP)
+
+Helmet enforces a **strict CSP** in `main.ts`. The policy only allows `'self'` origins.
+
+<Warning>
+  **Never load external resources from CDNs.** All assets (fonts, icons, stylesheets) must be self-hosted under `packages/frontend/public/`.
+</Warning>
+
+Current self-hosted assets:
+- **Boxicons Duotone** — `public/fonts/boxicons/` (CSS + font files)
+
+**Exception**: `connectSrc` includes `https://eu.i.posthog.com` for anonymous product analytics (opt-out via `MANIFEST_TELEMETRY_OPTOUT=1`).
+
+### OTLP Authentication
+
+- **Guard**: `OtlpAuthGuard` validates Bearer tokens (agent API keys starting with `mnfst_*`)
+- **Caching**: Valid API keys are cached in-memory for 5 minutes to avoid repeated DB lookups
+- **Dev mode bypass**: In local mode, the guard accepts any non-`mnfst_*` token from loopback IPs (for plugin dev mode)
+
+### Product Analytics
+
+Anonymous usage tracking via PostHog (`eu.i.posthog.com`).
+
+- **Frontend**: `services/analytics.ts`
+- **Backend**: `common/utils/product-telemetry.ts`
+- **Opt-out**: Set `MANIFEST_TELEMETRY_OPTOUT=1`
+
+## Data Flow
+
+### OTLP Ingestion
+
+```text
+1. OpenClaw plugin sends OTLP data (traces/metrics/logs) to /otlp/v1/*
+2. OtlpAuthGuard validates Bearer token (agent API key)
+3. OtlpDecoderService decodes protobuf → JSON
+4. TraceIngestService / MetricIngestService / LogIngestService:
+   - Extracts LLM call data (model, tokens, latency, cost)
+   - Creates agent_messages, llm_calls, agent_metrics, security_events
+5. IngestEventBus broadcasts events to SSE clients
+6. Dashboard updates in real-time via Server-Sent Events
+```
+
+### LLM Routing & Proxy
+
+```text
+1. Agent sends request to /v1/chat/completions (OpenAI-compatible)
+2. ResolveService:
+   - Fetches routing config (tiers, providers, keys)
+   - Scores request complexity via RequestScorer
+   - Assigns tier + resolves model
+3. ProxyService:
+   - Fetches provider API key (AES-256-GCM encrypted)
+   - Adapts request to provider format (Anthropic/Google adapters)
+   - Sends to provider API
+   - Streams response back to agent
+4. Session momentum tracking adjusts complexity scores over time
+```
+
+### Analytics Queries
+
+```text
+1. Frontend requests dashboard data (e.g., /api/v1/overview)
+2. SessionGuard validates user session
+3. AnalyticsService:
+   - Builds TypeORM QueryBuilder with addTenantFilter(qb, userId)
+   - Aggregates data (SUM, AVG, COUNT with GROUP BY)
+   - Joins agent_messages → llm_calls → model_pricing
+4. Returns JSON with timeseries data
+5. Frontend renders charts via uPlot
+```
+
+## API Endpoints
+
+| Method | Route | Auth | Purpose |
+|--------|-------|------|----------|
+| GET | `/api/v1/health` | Public | Health check |
+| ALL | `/api/auth/*` | Public | Better Auth (login, OAuth) |
+| POST | `/api/v1/telemetry` | API Key | JSON telemetry ingestion |
+| GET | `/api/v1/overview` | Session/API Key | Dashboard summary |
+| GET | `/api/v1/tokens` | Session/API Key | Token usage analytics |
+| GET | `/api/v1/costs` | Session/API Key | Cost analytics |
+| GET | `/api/v1/messages` | Session/API Key | Paginated message log |
+| GET | `/api/v1/agents` | Session/API Key | Agent list |
+| POST | `/api/v1/agents` | Session/API Key | Create agent |
+| DELETE | `/api/v1/agents/:name` | Session/API Key | Delete agent |
+| GET | `/api/v1/agents/:name/key` | Session/API Key | Get OTLP key |
+| POST | `/api/v1/agents/:name/rotate-key` | Session/API Key | Rotate OTLP key |
+| PATCH | `/api/v1/agents/:name` | Session/API Key | Rename agent |
+| GET | `/api/v1/security` | Session/API Key | Security score |
+| GET | `/api/v1/model-prices` | Session/API Key | Model pricing |
+| GET/POST/PATCH/DELETE | `/api/v1/notifications` | Session/API Key | Alert rules |
+| GET/POST/DELETE | `/api/v1/notifications/email-provider` | Session/API Key | Email config |
+| GET/POST/PUT/DELETE | `/api/v1/routing/*` | Session/API Key | Routing config |
+| POST | `/api/v1/routing/resolve` | Bearer (mnfst_*) | Model resolution |
+| POST | `/v1/chat/completions` | Bearer (mnfst_*) | LLM proxy |
+| GET | `/api/v1/events` | Session | SSE real-time events |
+| GET | `/api/v1/github/stars` | Public | GitHub star count |
+| POST | `/otlp/v1/traces` | Bearer (mnfst_*) | OTLP traces |
+| POST | `/otlp/v1/metrics` | Bearer (mnfst_*) | OTLP metrics |
+| POST | `/otlp/v1/logs` | Bearer (mnfst_*) | OTLP logs |
+
+## Validation
+
+- **Global pipe**: `ValidationPipe` with `whitelist: true` and `forbidNonWhitelisted: true`
+- **DTO decorators**: `class-validator` decorators on all DTOs
+- **Type coercion**: Explicit `@Type()` decorators on numeric fields
+
+## Domain Terminology
+
+- **Message**: Primary entity. Every row in `agent_messages` is a Message. The UI labels them "Messages" everywhere.
+- **Tenant**: User's data boundary. Created from `user.id` on first agent creation.
+- **Agent**: AI agent owned by a tenant. Has a unique OTLP ingest key.
+
+## Security Features
+
+- **API key hashing**: scrypt KDF in `common/utils/hash.util.ts`
+- **Provider key encryption**: AES-256-GCM in `common/utils/crypto.util.ts`
+- **Timing-safe comparison**: API key validation uses `crypto.timingSafeEqual()`
+- **Rate limiting**: Global throttler (configurable TTL + limit)
+- **CORS**: Enabled only in development mode
+- **CSP**: Strict policy enforced by Helmet
+
+## Performance Optimizations
+
+- **OTLP auth caching**: 5-minute in-memory cache for valid API keys
+- **Model pricing cache**: In-memory cache to avoid repeated DB lookups
+- **QueryBuilder**: Avoid N+1 queries via proper joins
+- **SSE batching**: Real-time events batched per connection
+- **Migration transactions**: All migrations run in a single transaction on boot

@@ -1,0 +1,476 @@
+---
+title: 'Testing Guide'
+description: 'Write and run tests for Manifest using Jest, Vitest, and Supertest'
+---
+
+## Testing Stack
+
+| Package | Framework | Test Types |
+|---------|-----------|------------|
+| **Backend** | Jest | Unit tests (`.spec.ts`) + E2E tests (Supertest) |
+| **Frontend** | Vitest | Unit tests + component tests |
+| **Plugin** | Jest | Unit tests |
+
+## Backend Testing
+
+### Running Tests
+
+```bash
+# Unit tests
+npm test --workspace=packages/backend
+
+# Watch mode
+npm test --workspace=packages/backend -- --watch
+
+# E2E tests
+npm run test:e2e --workspace=packages/backend
+
+# Coverage
+npm test --workspace=packages/backend -- --coverage
+```
+
+### Unit Tests
+
+Unit tests are located next to the source files with the `.spec.ts` suffix.
+
+**Example structure:**
+```text
+packages/backend/src/
+├── analytics/
+│   ├── services/
+│   │   ├── timeseries-queries.service.ts
+│   │   └── timeseries-queries.service.spec.ts  # Unit test
+│   └── controllers/
+│       ├── overview.controller.ts
+│       └── overview.controller.spec.ts          # Unit test
+```
+
+#### Writing Unit Tests
+
+Example unit test for a service:
+
+```typescript
+import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import { OverviewService } from './overview.service';
+import { AgentMessage } from '../../entities/agent-message.entity';
+
+describe('OverviewService', () => {
+  let service: OverviewService;
+  let mockRepository: any;
+
+  beforeEach(async () => {
+    mockRepository = {
+      createQueryBuilder: jest.fn(),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OverviewService,
+        {
+          provide: getRepositoryToken(AgentMessage),
+          useValue: mockRepository,
+        },
+      ],
+    }).compile();
+
+    service = module.get<OverviewService>(OverviewService);
+  });
+
+  it('should be defined', () => {
+    expect(service).toBeDefined();
+  });
+
+  it('should return overview data', async () => {
+    const userId = 'user-123';
+    const mockResult = {
+      totalMessages: 100,
+      totalTokens: 50000,
+      totalCost: 1.25,
+    };
+
+    mockRepository.createQueryBuilder.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      getRawOne: jest.fn().mockResolvedValue(mockResult),
+    });
+
+    const result = await service.getOverview(userId, '24h');
+    expect(result).toEqual(mockResult);
+  });
+});
+```
+
+### E2E Tests
+
+E2E tests are located in `packages/backend/test/` and use Supertest to test HTTP endpoints.
+
+**Test files:**
+```text
+packages/backend/test/
+├── helpers.ts                    # Test utilities
+├── jest-e2e.json                 # Jest config
+├── health.e2e-spec.ts            # Health endpoint
+├── telemetry.e2e-spec.ts         # Telemetry ingestion
+├── otlp.e2e-spec.ts              # OTLP ingestion
+├── overview.e2e-spec.ts          # Overview analytics
+├── tokens.e2e-spec.ts            # Token analytics
+├── costs.e2e-spec.ts             # Cost analytics
+├── messages.e2e-spec.ts          # Message log
+├── security.e2e-spec.ts          # Security dashboard
+├── routing-flow.e2e-spec.ts      # LLM routing
+├── proxy.e2e-spec.ts             # LLM proxy
+├── notifications.e2e-spec.ts     # Alert rules
+└── model-prices.e2e-spec.ts      # Model pricing
+```
+
+#### Writing E2E Tests
+
+Example E2E test:
+
+```typescript
+import * as request from 'supertest';
+import { Test } from '@nestjs/testing';
+import { INestApplication } from '@nestjs/common';
+import { AppModule } from '../src/app.module';
+import { setupTestApp } from './helpers';
+
+describe('Overview (e2e)', () => {
+  let app: INestApplication;
+  let apiKey: string;
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+
+    app = moduleRef.createNestApplication();
+    await setupTestApp(app);
+    await app.init();
+
+    apiKey = process.env.API_KEY || 'test-api-key';
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('/api/v1/overview (GET)', () => {
+    return request(app.getHttpServer())
+      .get('/api/v1/overview?period=24h')
+      .set('X-API-Key', apiKey)
+      .expect(200)
+      .expect((res) => {
+        expect(res.body).toHaveProperty('totalMessages');
+        expect(res.body).toHaveProperty('totalTokens');
+        expect(res.body).toHaveProperty('totalCost');
+      });
+  });
+
+  it('should return 401 without API key', () => {
+    return request(app.getHttpServer())
+      .get('/api/v1/overview?period=24h')
+      .expect(401);
+  });
+});
+```
+
+### Test Helpers
+
+The `packages/backend/test/helpers.ts` file provides utilities for E2E tests:
+
+```typescript
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import * as express from 'express';
+
+export async function setupTestApp(app: INestApplication) {
+  app.use(express.json());
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  );
+  return app;
+}
+```
+
+<Warning>
+  When adding new TypeORM entities to `database.module.ts`, also add them to the E2E test helper (`packages/backend/test/helpers.ts`) entities array. Missing entities cause `EntityMetadataNotFoundError`.
+</Warning>
+
+### Jest Configuration
+
+Backend Jest config in `packages/backend/package.json`:
+
+```json
+"jest": {
+  "moduleFileExtensions": ["js", "json", "ts", "tsx"],
+  "rootDir": "src",
+  "testRegex": ".*\\.spec\\.ts$",
+  "transform": {
+    "^.+\\.tsx?$": "ts-jest"
+  },
+  "collectCoverageFrom": [
+    "**/*.ts",
+    "!**/*.spec.ts",
+    "!main.ts",
+    "!**/database/migrations/**",
+    "!**/database/datasource.ts",
+    "!**/*.module.ts",
+    "!**/otlp/interfaces/index.ts",
+    "!**/otlp/proto/**"
+  ],
+  "coverageDirectory": "../coverage",
+  "testEnvironment": "node"
+}
+```
+
+## Frontend Testing
+
+### Running Tests
+
+```bash
+# Run tests
+npm test --workspace=packages/frontend
+
+# Watch mode
+npm test --workspace=packages/frontend -- --watch
+
+# Coverage
+npm test --workspace=packages/frontend -- --coverage
+```
+
+### Writing Frontend Tests
+
+Frontend tests use **Vitest** and **@solidjs/testing-library**.
+
+```typescript
+import { render, screen } from '@solidjs/testing-library';
+import { describe, it, expect } from 'vitest';
+import { Header } from './Header';
+
+describe('Header', () => {
+  it('renders the app name', () => {
+    render(() => <Header />);
+    expect(screen.getByText('Manifest')).toBeInTheDocument();
+  });
+
+  it('shows user email when logged in', () => {
+    const mockSession = {
+      user: { email: 'user@example.com' },
+    };
+    render(() => <Header session={mockSession} />);
+    expect(screen.getByText('user@example.com')).toBeInTheDocument();
+  });
+});
+```
+
+### Vitest Configuration
+
+Frontend Vitest config in `packages/frontend/vite.config.ts`:
+
+```typescript
+import { defineConfig } from 'vite';
+import solidPlugin from 'vite-plugin-solid';
+import { codecovVitePlugin } from '@codecov/vite-plugin';
+
+export default defineConfig({
+  plugins: [
+    solidPlugin(),
+    codecovVitePlugin({
+      enableBundleAnalysis: true,
+      bundleName: 'manifest-frontend',
+      uploadToken: process.env.CODECOV_TOKEN,
+    }),
+  ],
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: './tests/setup.ts',
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json', 'html', 'lcov'],
+    },
+  },
+});
+```
+
+## Plugin Testing
+
+### Running Tests
+
+```bash
+npm test --workspace=packages/openclaw-plugin
+```
+
+Plugin tests use Jest and follow the same conventions as backend tests.
+
+## Code Coverage
+
+Manifest uses **Codecov** to track code coverage. Coverage is uploaded automatically in CI.
+
+### Thresholds
+
+- **Project coverage**: Must not drop more than **1%** below the base branch
+- **Patch coverage**: New/changed lines must have at least **auto - 5%** coverage (aim for >90%)
+
+<Warning>
+  **Every new source file or modified function must have corresponding tests.** Codecov will fail the PR if changed lines are not covered.
+</Warning>
+
+### Coverage Flags
+
+| Flag | Paths | CI Job |
+|------|-------|--------|
+| `backend` | `packages/backend/src/` | Backend (PostgreSQL) |
+| `frontend` | `packages/frontend/src/` | frontend |
+| `plugin` | `packages/openclaw-plugin/src/` | plugin |
+
+### Viewing Coverage Locally
+
+After running tests with `--coverage`, open the HTML report:
+
+```bash
+# Backend
+open packages/backend/coverage/index.html
+
+# Frontend
+open packages/frontend/coverage/index.html
+```
+
+## CI Testing Workflow
+
+The CI pipeline runs on every PR and push to `main`. See `.github/workflows/ci.yml`.
+
+### Jobs
+
+1. **Lint**: ESLint across all packages
+2. **Backend (PostgreSQL)**: Unit + E2E tests with PostgreSQL 16
+3. **Backend (sql.js)**: Unit + E2E tests with sql.js (Linux + macOS)
+4. **Frontend**: Unit tests + Vite build
+5. **Plugin**: Unit tests
+6. **Changeset check**: Validates changeset presence on PRs
+
+### Test Databases
+
+- **PostgreSQL**: Uses GitHub Actions service container
+- **sql.js**: In-memory SQLite (no external dependencies)
+
+Environment variables for CI tests:
+
+```yaml
+DATABASE_URL: postgresql://myuser:mypassword@localhost:5432/mydatabase
+BETTER_AUTH_SECRET: ci-test-secret-at-least-32-characters-long!!
+NODE_ENV: test
+```
+
+## Testing Best Practices
+
+### Write Tests for All New Code
+
+- **Services**: Mock repositories using `getRepositoryToken()`
+- **Controllers**: Test HTTP endpoints via E2E tests
+- **Guards**: Test authentication logic with mock requests
+- **Utilities**: Test pure functions directly
+
+### Use Descriptive Test Names
+
+```typescript
+// Good
+it('should return 401 when API key is missing', () => { ... });
+
+// Bad
+it('test api key', () => { ... });
+```
+
+### Test Edge Cases
+
+- Invalid inputs
+- Missing required fields
+- Unauthorized access
+- Empty result sets
+- Database errors
+
+### Keep Tests Isolated
+
+- Don't rely on test execution order
+- Clean up resources in `afterEach` / `afterAll`
+- Use fresh data for each test
+
+### Mock External Dependencies
+
+- API calls (fetch, axios)
+- Third-party services (Mailgun, Resend)
+- Time-dependent logic (use `jest.useFakeTimers()`)
+
+### Avoid Testing Implementation Details
+
+Test **behavior**, not internal implementation:
+
+```typescript
+// Good — tests behavior
+it('should calculate total cost correctly', async () => {
+  const result = await service.getTotalCost('user-123');
+  expect(result).toBe(1.25);
+});
+
+// Bad — tests implementation
+it('should call repository.createQueryBuilder', async () => {
+  await service.getTotalCost('user-123');
+  expect(mockRepository.createQueryBuilder).toHaveBeenCalled();
+});
+```
+
+## Debugging Tests
+
+### Run a Single Test File
+
+```bash
+# Backend
+npm test --workspace=packages/backend -- overview.service.spec.ts
+
+# E2E
+npm run test:e2e --workspace=packages/backend -- overview.e2e-spec.ts
+
+# Frontend
+npm test --workspace=packages/frontend -- Header.test.tsx
+```
+
+### Run a Single Test
+
+```typescript
+// Use .only to run a single test
+it.only('should return overview data', async () => {
+  // ...
+});
+```
+
+### Debug with VS Code
+
+Add this to `.vscode/launch.json`:
+
+```json
+{
+  "type": "node",
+  "request": "launch",
+  "name": "Jest Current File",
+  "program": "${workspaceFolder}/node_modules/.bin/jest",
+  "args": [
+    "${fileBasenameNoExtension}",
+    "--config",
+    "${workspaceFolder}/packages/backend/package.json"
+  ],
+  "console": "integratedTerminal",
+  "internalConsoleOptions": "neverOpen",
+  "cwd": "${workspaceFolder}/packages/backend"
+}
+```
+
+## Next Steps
+
+- Review the [Contributing Guidelines](/advanced/development/contributing) for PR requirements
+- Check the [Architecture Guide](/advanced/development/architecture) to understand the codebase
+- See [Development Setup](/advanced/development/setup) for local environment configuration

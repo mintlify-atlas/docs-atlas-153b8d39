@@ -1,0 +1,349 @@
+---
+title: 'Notification Rules'
+description: 'Manage alert rules for agent usage monitoring'
+---
+
+## Overview
+
+Notification rules let you set up alerts when agents exceed usage thresholds. You can monitor token consumption or costs over different time periods and choose to receive notifications, block requests, or both.
+
+## List Notification Rules
+
+<api-endpoint method="GET" path="/api/v1/notifications" />
+
+Retrieve all notification rules for a specific agent, including their trigger history.
+
+### Query Parameters
+
+<ParamField query="agent_name" type="string" required>
+  Name of the agent to retrieve rules for
+</ParamField>
+
+### Response Fields
+
+<ResponseField name="id" type="string">
+  Unique identifier for the rule
+</ResponseField>
+
+<ResponseField name="agent_name" type="string">
+  Name of the agent this rule monitors
+</ResponseField>
+
+<ResponseField name="metric_type" type="string">
+  Type of metric to monitor. Either `tokens` or `cost`
+</ResponseField>
+
+<ResponseField name="threshold" type="number">
+  Threshold value that triggers the alert. For tokens, this is the total token count. For cost, this is USD.
+</ResponseField>
+
+<ResponseField name="period" type="string">
+  Time window for threshold calculation. One of: `hour`, `day`, `week`, `month`
+</ResponseField>
+
+<ResponseField name="action" type="string">
+  Action to take when threshold is exceeded. One of:
+  - `notify` - Send email notification only
+  - `block` - Block agent requests until threshold resets
+  - `both` - Send notification and block requests
+</ResponseField>
+
+<ResponseField name="is_active" type="boolean">
+  Whether the rule is currently active
+</ResponseField>
+
+<ResponseField name="trigger_count" type="number">
+  Number of times this rule has been triggered
+</ResponseField>
+
+<ResponseField name="created_at" type="string">
+  ISO 8601 timestamp of rule creation
+</ResponseField>
+
+<ResponseField name="updated_at" type="string">
+  ISO 8601 timestamp of last update
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET 'https://api.manifest.build/api/v1/notifications?agent_name=my-agent' \
+  -H 'Cookie: better-auth.session_token=YOUR_SESSION_TOKEN'
+```
+
+### Example Response
+
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "agent_name": "my-agent",
+    "metric_type": "tokens",
+    "threshold": 1000000,
+    "period": "day",
+    "action": "notify",
+    "is_active": true,
+    "trigger_count": 3,
+    "created_at": "2024-03-04T10:30:00",
+    "updated_at": "2024-03-04T10:30:00"
+  },
+  {
+    "id": "660e8400-e29b-41d4-a716-446655440001",
+    "agent_name": "my-agent",
+    "metric_type": "cost",
+    "threshold": 10.0,
+    "period": "week",
+    "action": "both",
+    "is_active": true,
+    "trigger_count": 0,
+    "created_at": "2024-03-04T11:00:00",
+    "updated_at": "2024-03-04T11:00:00"
+  }
+]
+```
+
+## Create Notification Rule
+
+<api-endpoint method="POST" path="/api/v1/notifications" />
+
+Create a new notification rule for an agent.
+
+### Request Body
+
+<ParamField body="agent_name" type="string" required>
+  Name of the agent to monitor. Must be an existing agent in your workspace.
+</ParamField>
+
+<ParamField body="metric_type" type="string" required>
+  Type of metric to monitor:
+  - `tokens` - Monitor total token usage (input + output)
+  - `cost` - Monitor cost in USD
+</ParamField>
+
+<ParamField body="threshold" type="number" required>
+  Threshold value that triggers the alert. Must be greater than or equal to 1.
+  - For `tokens`: Total token count
+  - For `cost`: USD amount (e.g., 10.5 for $10.50)
+</ParamField>
+
+<ParamField body="period" type="string" required>
+  Time window for threshold calculation:
+  - `hour` - Rolling 60-minute window
+  - `day` - Rolling 24-hour window
+  - `week` - Rolling 7-day window
+  - `month` - Rolling 30-day window
+</ParamField>
+
+<ParamField body="action" type="string" default="notify">
+  Action to take when threshold is exceeded:
+  - `notify` - Send email notification
+  - `block` - Block agent API requests
+  - `both` - Send notification and block requests
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X POST 'https://api.manifest.build/api/v1/notifications' \
+  -H 'Cookie: better-auth.session_token=YOUR_SESSION_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "agent_name": "my-agent",
+    "metric_type": "cost",
+    "threshold": 50,
+    "period": "month",
+    "action": "both"
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "id": "770e8400-e29b-41d4-a716-446655440002",
+  "agent_name": "my-agent",
+  "tenant_id": "tenant-001",
+  "agent_id": "agent-001",
+  "user_id": "user-123",
+  "metric_type": "cost",
+  "threshold": 50,
+  "period": "month",
+  "action": "both",
+  "is_active": true,
+  "created_at": "2024-03-04T12:00:00",
+  "updated_at": "2024-03-04T12:00:00"
+}
+```
+
+## Update Notification Rule
+
+<api-endpoint method="PATCH" path="/api/v1/notifications/:id" />
+
+Update an existing notification rule. All fields are optional.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  The unique identifier of the rule to update
+</ParamField>
+
+### Request Body
+
+<ParamField body="metric_type" type="string">
+  Change the metric type. Either `tokens` or `cost`.
+</ParamField>
+
+<ParamField body="threshold" type="number">
+  Update the threshold value. Must be greater than or equal to 1.
+</ParamField>
+
+<ParamField body="period" type="string">
+  Change the time window: `hour`, `day`, `week`, or `month`
+</ParamField>
+
+<ParamField body="is_active" type="boolean">
+  Enable or disable the rule without deleting it
+</ParamField>
+
+<ParamField body="action" type="string">
+  Change the action: `notify`, `block`, or `both`
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X PATCH 'https://api.manifest.build/api/v1/notifications/770e8400-e29b-41d4-a716-446655440002' \
+  -H 'Cookie: better-auth.session_token=YOUR_SESSION_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "threshold": 100,
+    "is_active": false
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "id": "770e8400-e29b-41d4-a716-446655440002",
+  "agent_name": "my-agent",
+  "tenant_id": "tenant-001",
+  "agent_id": "agent-001",
+  "user_id": "user-123",
+  "metric_type": "cost",
+  "threshold": 100,
+  "period": "month",
+  "action": "both",
+  "is_active": false,
+  "created_at": "2024-03-04T12:00:00",
+  "updated_at": "2024-03-04T12:15:00"
+}
+```
+
+## Delete Notification Rule
+
+<api-endpoint method="DELETE" path="/api/v1/notifications/:id" />
+
+Permanently delete a notification rule.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  The unique identifier of the rule to delete
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X DELETE 'https://api.manifest.build/api/v1/notifications/770e8400-e29b-41d4-a716-446655440002' \
+  -H 'Cookie: better-auth.session_token=YOUR_SESSION_TOKEN'
+```
+
+### Example Response
+
+```json
+{
+  "deleted": true
+}
+```
+
+## How Thresholds Work
+
+### Rolling Windows
+
+All time periods use rolling windows, not calendar boundaries:
+
+- **Hour**: Usage in the last 60 minutes from now
+- **Day**: Usage in the last 24 hours from now
+- **Week**: Usage in the last 7 days from now
+- **Month**: Usage in the last 30 days from now
+
+### Threshold Checking
+
+Rules are evaluated every 5 minutes by a background cron job. When usage exceeds the threshold:
+
+1. **Notify action**: An email is sent to the configured notification email address
+2. **Block action**: Subsequent OTLP requests from the agent are rejected with a 429 status
+3. **Both action**: Email is sent and requests are blocked
+
+### Cost Calculation
+
+Cost thresholds use the model pricing data configured in your workspace. Costs are calculated as:
+
+```
+total_cost = (input_tokens × input_price) + (output_tokens × output_price)
+```
+
+Prices are in USD per million tokens and pulled from the `model_pricing` table.
+
+## Use Cases
+
+### Development Safety Net
+
+Prevent runaway costs during development:
+
+```json
+{
+  "agent_name": "dev-agent",
+  "metric_type": "cost",
+  "threshold": 5,
+  "period": "day",
+  "action": "both"
+}
+```
+
+### Production Monitoring
+
+Get notified about unusual spikes without blocking production:
+
+```json
+{
+  "agent_name": "prod-agent",
+  "metric_type": "tokens",
+  "threshold": 10000000,
+  "period": "hour",
+  "action": "notify"
+}
+```
+
+### Budget Enforcement
+
+Hard cap on monthly spending:
+
+```json
+{
+  "agent_name": "any-agent",
+  "metric_type": "cost",
+  "threshold": 500,
+  "period": "month",
+  "action": "block"
+}
+```
+
+## Notes
+
+- You must configure an email provider before creating rules with `notify` or `both` actions
+- Rules are tenant-scoped — you can only create rules for agents you own
+- Deleting an agent also deletes all its notification rules
+- The `trigger_count` field tracks historical triggers and never decreases
+- Blocked requests return HTTP 429 with a descriptive error message

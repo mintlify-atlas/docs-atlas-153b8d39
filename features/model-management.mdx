@@ -1,0 +1,446 @@
+---
+title: Model Management
+description: Configure model pricing, sync pricing data, and track model usage
+---
+
+Manifest maintains a database of LLM model pricing to enable accurate cost tracking. The Model Prices page lets you view pricing for all supported models, sync updates, and identify models without pricing data.
+
+## Model Pricing Database
+
+The `model_pricing` table stores per-token pricing for all supported models:
+
+```typescript
+// From packages/backend/src/entities/model-pricing.entity.ts
+{
+  model_name: string,              // Canonical model identifier
+  provider: string,                // Provider name (OpenAI, Anthropic, etc.)
+  input_price_per_token: number,   // Cost per input token (USD)
+  output_price_per_token: number,  // Cost per output token (USD)
+  context_window: number,          // Max context size
+  capability_reasoning: number,    // Reasoning capability score (0-1)
+  capability_code: number,         // Code capability score (0-1)
+  quality_score: number,           // Overall quality score (0-1)
+  updated_at: string               // Last sync timestamp
+}
+```
+
+### Supported Providers
+
+Manifest tracks pricing for:
+
+- **OpenAI**: GPT-4o, GPT-4 Turbo, GPT-3.5, O1, O3
+- **Anthropic**: Claude 3.5 Sonnet, Claude 3 Opus/Haiku
+- **Google**: Gemini 2.0, Gemini 1.5 Pro/Flash
+- **DeepSeek**: DeepSeek-V3, DeepSeek-R1
+- **Meta**: Llama 3.3, Llama 3.2, Llama 3.1
+- **xAI**: Grok 2, Grok Beta
+- **Mistral**: Mistral Large, Codestral
+- **Ollama**: Local models (zero cost)
+
+## Model Prices UI
+
+The Model Prices page (`/model-prices`) displays all models in a sortable, filterable table:
+
+```typescript
+// From packages/frontend/src/pages/ModelPrices.tsx:198-235
+<table class="data-table">
+  <thead>
+    <tr>
+      <th onClick={() => handleSort('model_name')}>Model{indicator('model_name')}</th>
+      <th onClick={() => handleSort('provider')}>Provider{indicator('provider')}</th>
+      <th onClick={() => handleSort('input_price_per_million')}>
+        Cost to send / 1M tokens{indicator('input_price_per_million')}
+      </th>
+      <th onClick={() => handleSort('output_price_per_million')}>
+        Cost to receive / 1M tokens{indicator('output_price_per_million')}
+      </th>
+    </tr>
+  </thead>
+  <tbody>
+    <For each={sortedModels()}>
+      {(model) => (
+        <tr>
+          <td>{model.model_name}</td>
+          <td>{model.provider}</td>
+          <td>{formatPrice(model.input_price_per_million)}</td>
+          <td>{formatPrice(model.output_price_per_million)}</td>
+        </tr>
+      )}
+    </For>
+  </tbody>
+</table>
+```
+
+### Sorting
+
+Click any column header to sort by that field. Clicking again reverses the sort direction (ascending ↔ descending).
+
+```typescript
+// From packages/frontend/src/pages/ModelPrices.tsx:36-43
+const handleSort = (key: SortKey) => {
+  if (sortKey() === key) {
+    setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+  } else {
+    setSortKey(key);
+    setSortDir('asc');
+  }
+};
+```
+
+### Filtering
+
+Filter by model name or provider using the filter bar:
+
+```typescript
+// From packages/frontend/src/pages/ModelPrices.tsx:59-70
+const filteredModels = createMemo(() => {
+  const models = data()?.models;
+  if (!models) return [];
+  const selModels = selectedModels();
+  const selProviders = selectedProviders();
+
+  return models.filter((m) => {
+    if (selModels.size > 0 && !selModels.has(m.model_name)) return false;
+    if (selProviders.size > 0 && !selProviders.has(m.provider)) return false;
+    return true;
+  });
+});
+```
+
+## Pricing Sync
+
+Manifest syncs model pricing from external sources:
+
+### Automatic Sync
+
+Pricing syncs automatically:
+
+- **On startup**: When the backend starts
+- **Every 24 hours**: Via cron job (configurable)
+
+```typescript
+// From packages/backend/src/database/pricing-sync.service.ts
+@Injectable()
+export class PricingSyncService {
+  constructor(private readonly ds: DataSource) {}
+
+  async syncPricing(): Promise<number> {
+    // Fetch latest pricing from OpenRouter
+    const response = await fetch('https://openrouter.ai/api/v1/models');
+    const data = await response.json();
+
+    let updated = 0;
+    for (const model of data.data) {
+      const existing = await this.ds.query(
+        `SELECT * FROM model_pricing WHERE model_name = $1`,
+        [model.id]
+      );
+
+      if (existing.length === 0) {
+        // Insert new model
+        await this.ds.query(
+          `INSERT INTO model_pricing (...) VALUES (...)`,
+          [...]
+        );
+        updated++;
+      } else {
+        // Update if pricing changed
+        const current = existing[0];
+        if (current.input_price_per_token !== model.pricing.prompt ||
+            current.output_price_per_token !== model.pricing.completion) {
+          await this.ds.query(
+            `UPDATE model_pricing SET input_price_per_token = $1, output_price_per_token = $2, updated_at = $3 WHERE model_name = $4`,
+            [model.pricing.prompt, model.pricing.completion, new Date().toISOString(), model.id]
+          );
+          updated++;
+        }
+      }
+    }
+
+    return updated;
+  }
+}
+```
+
+### Manual Sync
+
+Trigger a manual sync via API:
+
+```http
+POST /api/v1/model-prices/sync
+```
+
+Response:
+
+```json
+{
+  "updated": 12
+}
+```
+
+The UI can expose this as a "Refresh Prices" button.
+
+## Pricing History
+
+When pricing changes, the old price is archived in `pricing_history`:
+
+```typescript
+// From packages/backend/src/database/pricing-history.service.ts
+async archiveChange(
+  modelName: string,
+  oldInputPrice: number,
+  oldOutputPrice: number,
+  newInputPrice: number,
+  newOutputPrice: number
+) {
+  await this.ds.query(
+    `INSERT INTO pricing_history (id, model_name, old_input_price, old_output_price, new_input_price, new_output_price, changed_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [uuid(), modelName, oldInputPrice, oldOutputPrice, newInputPrice, newOutputPrice, new Date().toISOString()]
+  );
+}
+```
+
+### View History
+
+```http
+GET /api/v1/model-prices/gpt-4o/history
+```
+
+Response:
+
+```json
+[
+  {
+    "changed_at": "2024-03-04T12:00:00Z",
+    "old_input_price_per_million": 5.00,
+    "old_output_price_per_million": 15.00,
+    "new_input_price_per_million": 2.50,
+    "new_output_price_per_million": 10.00
+  }
+]
+```
+
+## Model Name Normalization
+
+Manifest normalizes model names to handle provider-specific variations:
+
+```typescript
+// From packages/backend/src/model-prices/model-name-normalizer.ts
+export function normalizeModelName(name: string): string {
+  // Remove common prefixes
+  let normalized = name.toLowerCase();
+  normalized = normalized.replace(/^(openai|anthropic|google|meta|mistral)[\/\-]/, '');
+
+  // Handle date suffixes (e.g., claude-3-5-sonnet-20241022 → claude-3-5-sonnet)
+  normalized = normalized.replace(/-\d{8}$/, '');
+
+  // Remove :latest, :beta tags
+  normalized = normalized.replace(/:(latest|beta|preview)$/, '');
+
+  return normalized;
+}
+```
+
+This ensures pricing lookups work even when clients send non-canonical model names.
+
+## Unresolved Models
+
+When Manifest encounters a model without pricing data, it logs it to `unresolved_models`:
+
+```typescript
+// From packages/backend/src/model-prices/unresolved-model-tracker.service.ts
+async trackUnresolved(modelName: string, provider: string, contextHint?: string) {
+  const existing = await this.ds.query(
+    `SELECT id FROM unresolved_models WHERE model_name = $1`,
+    [modelName]
+  );
+
+  if (existing.length === 0) {
+    await this.ds.query(
+      `INSERT INTO unresolved_models (id, model_name, provider, first_seen, last_seen, occurrence_count, context_hint)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [uuid(), modelName, provider, now, now, 1, contextHint]
+    );
+  } else {
+    await this.ds.query(
+      `UPDATE unresolved_models SET last_seen = $1, occurrence_count = occurrence_count + 1 WHERE model_name = $2`,
+      [now, modelName]
+    );
+  }
+}
+```
+
+### View Unresolved Models
+
+```http
+GET /api/v1/model-prices/unresolved
+```
+
+Response:
+
+```json
+[
+  {
+    "model_name": "my-custom-model",
+    "provider": "ollama",
+    "first_seen": "2024-03-04T10:00:00Z",
+    "last_seen": "2024-03-04T12:30:00Z",
+    "occurrence_count": 147,
+    "context_hint": "proxy"
+  }
+]
+```
+
+Use this to identify models that need manual pricing entries.
+
+## Provider Configuration
+
+When configuring routing, Manifest only allows selecting models from active providers:
+
+```typescript
+// From packages/backend/src/routing/routing.controller.ts:160-181
+@Get(':agentName/available-models')
+async getAvailableModels(@CurrentUser() user: AuthUser, @Param() params: AgentNameParamDto) {
+  const agent = await this.resolveAgent(user.id, params.agentName);
+  const providers = await this.routingService.getProviders(agent.id);
+  const activeProviders = expandProviderNames(
+    providers.filter((p) => p.is_active).map((p) => p.provider),
+  );
+
+  const models = this.pricingCache.getAll();
+  return models
+    .filter((m) => activeProviders.has(m.provider.toLowerCase()))
+    .map((m) => ({
+      model_name: m.model_name,
+      provider: m.provider,
+      input_price_per_token: m.input_price_per_token,
+      output_price_per_token: m.output_price_per_token,
+      context_window: m.context_window,
+      capability_reasoning: m.capability_reasoning,
+      capability_code: m.capability_code,
+      quality_score: m.quality_score,
+    }));
+}
+```
+
+This ensures users only see models they can actually use.
+
+## Pricing Cache
+
+Model pricing is cached in-memory for fast lookups:
+
+```typescript
+// From packages/backend/src/model-prices/model-pricing-cache.service.ts
+@Injectable()
+export class ModelPricingCacheService implements OnModuleInit {
+  private cache: Map<string, ModelPricing> = new Map();
+
+  async onModuleInit() {
+    await this.refresh();
+  }
+
+  async refresh() {
+    const rows = await this.ds.query(`SELECT * FROM model_pricing`);
+    this.cache.clear();
+    for (const row of rows) {
+      this.cache.set(row.model_name, row);
+    }
+  }
+
+  getByModel(modelName: string): ModelPricing | undefined {
+    return this.cache.get(normalizeModelName(modelName));
+  }
+
+  getAll(): ModelPricing[] {
+    return Array.from(this.cache.values());
+  }
+}
+```
+
+The cache refreshes:
+
+- On app startup (`onModuleInit`)
+- After pricing sync
+- On manual refresh
+
+## API Endpoints
+
+### Get All Model Prices
+
+```http
+GET /api/v1/model-prices
+```
+
+Response:
+
+```json
+{
+  "models": [
+    {
+      "model_name": "gpt-4o",
+      "provider": "OpenAI",
+      "input_price_per_million": 2.50,
+      "output_price_per_million": 10.00
+    },
+    {
+      "model_name": "claude-3-5-sonnet-20241022",
+      "provider": "Anthropic",
+      "input_price_per_million": 3.00,
+      "output_price_per_million": 15.00
+    }
+  ],
+  "lastSyncedAt": "2024-03-04T12:00:00Z"
+}
+```
+
+### Sync Pricing
+
+```http
+POST /api/v1/model-prices/sync
+```
+
+### Get Unresolved Models
+
+```http
+GET /api/v1/model-prices/unresolved
+```
+
+### Get Pricing History
+
+```http
+GET /api/v1/model-prices/{modelName}/history
+```
+
+<Info>
+Model pricing is cached for 1 hour on the client side (`@CacheTTL(MODEL_PRICES_CACHE_TTL_MS)`). Sync changes may take up to an hour to appear in the UI.
+</Info>
+
+## Custom Model Pricing
+
+For self-hosted or custom models, manually insert pricing:
+
+```sql
+INSERT INTO model_pricing (
+  model_name, provider, input_price_per_token, output_price_per_token,
+  context_window, capability_reasoning, capability_code, quality_score, updated_at
+)
+VALUES (
+  'my-custom-model', 'ollama', 0.0, 0.0,
+  128000, 0.8, 0.9, 0.85, NOW()
+);
+```
+
+Or use the API (future feature):
+
+```http
+POST /api/v1/model-prices/custom
+Content-Type: application/json
+
+{
+  "model_name": "my-custom-model",
+  "provider": "ollama",
+  "input_price_per_million": 0.0,
+  "output_price_per_million": 0.0
+}
+```

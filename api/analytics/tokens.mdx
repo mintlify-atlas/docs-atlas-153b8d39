@@ -1,0 +1,192 @@
+---
+title: 'Token Analytics'
+api: 'GET /api/v1/tokens'
+description: 'Retrieve detailed token usage analytics with hourly and daily breakdowns'
+---
+
+## Overview
+
+The tokens endpoint provides granular token usage data, including summary statistics and separate hourly/daily timeseries. This endpoint returns both aggregation types simultaneously, allowing clients to choose the appropriate granularity for visualization.
+
+## Authentication
+
+Requires session authentication (cookie) or API key via `X-API-Key` header.
+
+## Query Parameters
+
+<ParamField query="range" type="string" default="24h">
+  Time range for analytics. Valid values: `1h`, `6h`, `24h`, `7d`, `30d`
+</ParamField>
+
+<ParamField query="agent_name" type="string">
+  Filter analytics to a specific agent. If omitted, returns data for all agents.
+</ParamField>
+
+## Response Schema
+
+<ResponseField name="summary" type="object">
+  Token usage summary for the selected time range
+  
+  <Expandable title="summary fields">
+    <ResponseField name="total_tokens" type="object">
+      Total token count with trend analysis
+      
+      <Expandable title="total_tokens fields">
+        <ResponseField name="value" type="number">
+          Total tokens (input + output) in the time range
+        </ResponseField>
+        
+        <ResponseField name="trend_pct" type="number">
+          Percentage change vs. previous equivalent period. Positive = increase, negative = decrease.
+        </ResponseField>
+        
+        <ResponseField name="sub_values" type="object">
+          <Expandable title="sub_values fields">
+            <ResponseField name="input" type="number">
+              Total input tokens
+            </ResponseField>
+            
+            <ResponseField name="output" type="number">
+              Total output tokens
+            </ResponseField>
+          </Expandable>
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="input_tokens" type="number">
+      Total input tokens (convenience field, same as `total_tokens.sub_values.input`)
+    </ResponseField>
+    
+    <ResponseField name="output_tokens" type="number">
+      Total output tokens (convenience field, same as `total_tokens.sub_values.output`)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="hourly" type="array">
+  Token usage aggregated by hour
+  
+  <Expandable title="hourly item fields">
+    <ResponseField name="hour" type="string">
+      ISO 8601 timestamp for the hour bucket. Format: `YYYY-MM-DD HH:00:00`
+      
+      Time is truncated to the start of the hour (e.g., `2026-03-04 10:00:00` represents 10:00-11:00).
+    </ResponseField>
+    
+    <ResponseField name="input_tokens" type="number">
+      Input tokens consumed during this hour
+    </ResponseField>
+    
+    <ResponseField name="output_tokens" type="number">
+      Output tokens generated during this hour
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="daily" type="array">
+  Token usage aggregated by day
+  
+  <Expandable title="daily item fields">
+    <ResponseField name="date" type="string">
+      Date in `YYYY-MM-DD` format
+    </ResponseField>
+    
+    <ResponseField name="input_tokens" type="number">
+      Input tokens consumed during this day
+    </ResponseField>
+    
+    <ResponseField name="output_tokens" type="number">
+      Output tokens generated during this day
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Example Request
+
+```bash cURL
+curl -X GET "https://api.manifest.build/api/v1/tokens?range=7d&agent_name=research-agent" \
+  -H "X-API-Key: your-api-key"
+```
+
+## Example Response
+
+```json
+{
+  "summary": {
+    "total_tokens": {
+      "value": 1458920,
+      "trend_pct": 15.3,
+      "sub_values": {
+        "input": 985000,
+        "output": 473920
+      }
+    },
+    "input_tokens": 985000,
+    "output_tokens": 473920
+  },
+  "hourly": [
+    {
+      "hour": "2026-02-26 00:00:00",
+      "input_tokens": 12500,
+      "output_tokens": 5800
+    },
+    {
+      "hour": "2026-02-26 01:00:00",
+      "input_tokens": 8900,
+      "output_tokens": 3200
+    },
+    {
+      "hour": "2026-02-26 02:00:00",
+      "input_tokens": 15200,
+      "output_tokens": 7100
+    }
+  ],
+  "daily": [
+    {
+      "date": "2026-02-26",
+      "input_tokens": 145000,
+      "output_tokens": 68000
+    },
+    {
+      "date": "2026-02-27",
+      "input_tokens": 132000,
+      "output_tokens": 61500
+    },
+    {
+      "date": "2026-02-28",
+      "input_tokens": 158000,
+      "output_tokens": 72800
+    },
+    {
+      "date": "2026-03-01",
+      "input_tokens": 168000,
+      "output_tokens": 79200
+    },
+    {
+      "date": "2026-03-02",
+      "input_tokens": 142000,
+      "output_tokens": 66300
+    },
+    {
+      "date": "2026-03-03",
+      "input_tokens": 125000,
+      "output_tokens": 58900
+    },
+    {
+      "date": "2026-03-04",
+      "input_tokens": 115000,
+      "output_tokens": 67220
+    }
+  ]
+}
+```
+
+## Notes
+
+- **Both aggregations returned**: Unlike `/overview`, this endpoint returns both `hourly` and `daily` arrays in every response, regardless of the `range` parameter. Clients can choose which to display.
+- **Trend calculation**: Compares current period vs. previous period of equal length. For `7d` range, compares last 7 days vs. previous 7 days.
+- **Caching**: Responses are cached for 5 minutes (see `DASHBOARD_CACHE_TTL_MS`).
+- **Multi-tenancy**: Data is automatically filtered by authenticated user.
+- **Token counting**: Input tokens = prompt/context tokens. Output tokens = completion/generated tokens. Cache tokens are tracked separately and not included in these totals.
+- **Empty buckets**: Time periods with no activity return `input_tokens: 0` and `output_tokens: 0`.

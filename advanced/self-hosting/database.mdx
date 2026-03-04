@@ -1,0 +1,708 @@
+---
+title: Database Setup
+description: PostgreSQL setup, migrations, and backup strategies
+---
+
+## Overview
+
+Manifest uses PostgreSQL 16+ in production (`cloud` mode). The application automatically runs database migrations on startup using TypeORM.
+
+**Schema synchronization is permanently disabled** (`synchronize: false`). All schema changes must go through migrations.
+
+## PostgreSQL Setup
+
+### Requirements
+
+- **PostgreSQL 16** or later
+- **2GB RAM** minimum for database
+- **10GB storage** minimum (grows with telemetry data)
+
+### Installation
+
+<Tabs>
+  <Tab title="Docker">
+    ```bash
+    docker run -d \
+      --name manifest-postgres \
+      -e POSTGRES_USER=manifest \
+      -e POSTGRES_PASSWORD=your_secure_password \
+      -e POSTGRES_DB=manifest \
+      -p 5432:5432 \
+      -v manifest-data:/var/lib/postgresql/data \
+      postgres:16
+    ```
+  </Tab>
+  
+  <Tab title="Ubuntu/Debian">
+    ```bash
+    # Install PostgreSQL
+    sudo apt update
+    sudo apt install postgresql-16 postgresql-contrib-16
+
+    # Start service
+    sudo systemctl start postgresql
+    sudo systemctl enable postgresql
+    ```
+  </Tab>
+  
+  <Tab title="macOS">
+    ```bash
+    # Using Homebrew
+    brew install postgresql@16
+    brew services start postgresql@16
+    ```
+  </Tab>
+  
+  <Tab title="Railway">
+    1. Go to your Railway project
+    2. Click "New" → "Database" → "PostgreSQL"
+    3. Railway provisions PostgreSQL automatically
+    4. Copy the connection string from "Connect" tab
+  </Tab>
+</Tabs>
+
+### Database Creation
+
+<Steps>
+  <Step title="Connect to PostgreSQL">
+    ```bash
+    psql -U postgres
+    ```
+  </Step>
+
+  <Step title="Create database and user">
+    ```sql
+    CREATE DATABASE manifest;
+    CREATE USER manifest WITH PASSWORD 'your_secure_password';
+    GRANT ALL PRIVILEGES ON DATABASE manifest TO manifest;
+    ```
+  </Step>
+
+  <Step title="Grant schema permissions (PostgreSQL 15+)">
+    ```sql
+    \c manifest
+    GRANT ALL ON SCHEMA public TO manifest;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO manifest;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO manifest;
+    ```
+  </Step>
+
+  <Step title="Exit and verify connection">
+    ```sql
+    \q
+    ```
+    
+    ```bash
+    psql -U manifest -d manifest -c "SELECT version();"
+    ```
+  </Step>
+</Steps>
+
+### Connection String
+
+Format:
+
+```
+postgresql://username:password@host:port/database
+```
+
+Examples:
+
+```bash
+# Local
+DATABASE_URL=postgresql://manifest:password@localhost:5432/manifest
+
+# Docker
+DATABASE_URL=postgresql://manifest:password@manifest-postgres:5432/manifest
+
+# Railway (auto-generated)
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+
+# With SSL
+DATABASE_URL=postgresql://user:pass@host:5432/db?sslmode=require
+```
+
+## Database Migrations
+
+TypeORM migrations are version-controlled in `packages/backend/src/database/migrations/`. Migrations run automatically on app startup.
+
+### Migration Flow
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Application Startup                                │
+│                                                     │
+│  1. Connect to PostgreSQL                           │
+│  2. Run Better Auth migrations (user/session tables)│
+│  3. Run TypeORM migrations (application tables)     │
+│  4. Start server                                    │
+└─────────────────────────────────────────────────────┘
+```
+
+Migrations run in a **single transaction** (`migrationsTransactionMode: 'all'`). If any migration fails, all changes are rolled back.
+
+### Automatic Migrations
+
+Migrations run automatically when:
+
+- The application starts
+- `migrationsRun: true` in TypeORM config
+- Database connection is successful
+
+You'll see in the logs:
+
+```
+[TypeORM] Running migrations: [InitialSchema1771464895790, ...]
+[TypeORM] 16 migrations are already loaded in the database.
+[TypeORM] No migrations need to be executed.
+```
+
+### Manual Migration Commands
+
+For development and debugging:
+
+<CodeGroup>
+```bash Show migration status
+cd packages/backend
+npm run migration:show
+```
+
+```bash Run pending migrations
+cd packages/backend
+npm run migration:run
+```
+
+```bash Revert last migration
+cd packages/backend
+npm run migration:revert
+```
+
+```bash Generate migration from entity changes
+cd packages/backend
+npm run migration:generate -- src/database/migrations/DescriptiveName
+```
+
+```bash Create empty migration
+cd packages/backend
+npm run migration:create -- src/database/migrations/Name
+```
+</CodeGroup>
+
+### Migration Status Output
+
+Example:
+
+```
+[X] InitialSchema1771464895790
+[X] HashApiKeys1771500000000
+[X] ModelPricingImprovements1771600000000
+[X] AddRoutingTables1771700000000
+[ ] NewFeature1772600000000
+```
+
+- `[X]` — Applied
+- `[ ]` — Pending
+
+### Creating New Migrations
+
+<Warning>
+  Always use unique timestamps for new migrations. Never reuse a timestamp from an existing migration file.
+</Warning>
+
+<Steps>
+  <Step title="Modify entity">
+    Edit a TypeORM entity in `packages/backend/src/entities/`:
+    
+    ```typescript
+    @Entity('agents')
+    export class Agent {
+      // ... existing columns
+      
+      @Column({ type: 'text', nullable: true })
+      new_field?: string;
+    }
+    ```
+  </Step>
+
+  <Step title="Generate migration">
+    ```bash
+    cd packages/backend
+    npm run migration:generate -- src/database/migrations/AddAgentNewField
+    ```
+    
+    This creates a file like `1772700000000-AddAgentNewField.ts`.
+  </Step>
+
+  <Step title="Review generated migration">
+    ```typescript
+    import { MigrationInterface, QueryRunner } from 'typeorm';
+
+    export class AddAgentNewField1772700000000 implements MigrationInterface {
+      public async up(queryRunner: QueryRunner): Promise<void> {
+        await queryRunner.query(
+          `ALTER TABLE "agents" ADD "new_field" text`
+        );
+      }
+
+      public async down(queryRunner: QueryRunner): Promise<void> {
+        await queryRunner.query(
+          `ALTER TABLE "agents" DROP COLUMN "new_field"`
+        );
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Import migration">
+    Add to `packages/backend/src/database/database.module.ts`:
+    
+    ```typescript
+    import { AddAgentNewField1772700000000 } from './migrations/1772700000000-AddAgentNewField';
+
+    const migrations = [
+      // ... existing migrations
+      AddAgentNewField1772700000000,
+    ];
+    ```
+  </Step>
+
+  <Step title="Test migration">
+    ```bash
+    npm run migration:run
+    npm run migration:show
+    ```
+  </Step>
+
+  <Step title="Commit both files">
+    ```bash
+    git add packages/backend/src/entities/agent.entity.ts
+    git add packages/backend/src/database/migrations/1772700000000-AddAgentNewField.ts
+    git add packages/backend/src/database/database.module.ts
+    git commit -m "feat: add new_field to agents"
+    ```
+  </Step>
+</Steps>
+
+## Database Schema
+
+Manifest uses 19 TypeORM entities organized around multi-tenancy:
+
+### Core Tables
+
+| Table | Description |
+|-------|-------------|
+| `user` | Better Auth users (managed by Better Auth) |
+| `session` | Better Auth sessions (managed by Better Auth) |
+| `tenants` | Multi-tenant isolation boundary |
+| `agents` | AI agents (belong to tenants) |
+| `agent_api_keys` | OTLP ingest keys (`mnfst_*` format) |
+| `api_keys` | Programmatic API access keys |
+
+### Telemetry Tables
+
+| Table | Description |
+|-------|-------------|
+| `agent_messages` | Primary telemetry entity (messages) |
+| `llm_calls` | LLM API call records |
+| `tool_executions` | Tool execution records |
+| `agent_logs` | Agent log entries |
+| `security_events` | Security audit log |
+
+### Analytics Tables
+
+| Table | Description |
+|-------|-------------|
+| `token_usage_snapshots` | Pre-aggregated token usage |
+| `cost_snapshots` | Pre-aggregated cost data |
+| `model_pricing` | Model pricing data (100+ models) |
+| `model_pricing_history` | Historical pricing changes |
+| `unresolved_models` | Models with unknown pricing |
+
+### Notification Tables
+
+| Table | Description |
+|-------|-------------|
+| `notification_rules` | Alert threshold rules |
+| `notification_logs` | Alert delivery log |
+| `email_provider_configs` | Email provider credentials |
+
+### Routing Tables
+
+| Table | Description |
+|-------|-------------|
+| `user_providers` | LLM provider API keys (encrypted) |
+| `tier_assignments` | Agent routing tier assignments |
+
+## Data Retention
+
+### Telemetry Data Growth
+
+The `agent_messages` table grows with your agent activity:
+
+- **~1KB per message** (varies with metadata)
+- **1M messages** ≈ 1GB storage
+- **Indexes** add ~30% overhead
+
+Estimate your growth:
+
+```sql
+SELECT 
+  pg_size_pretty(pg_total_relation_size('agent_messages')) AS total_size,
+  COUNT(*) AS message_count,
+  (pg_total_relation_size('agent_messages') / COUNT(*))::bigint AS bytes_per_row
+FROM agent_messages;
+```
+
+### Retention Policy
+
+Manifest does not automatically delete old data. Implement a retention policy based on your needs:
+
+<Tabs>
+  <Tab title="30 days">
+    ```sql
+    DELETE FROM agent_messages 
+    WHERE timestamp < NOW() - INTERVAL '30 days';
+    ```
+  </Tab>
+  
+  <Tab title="90 days">
+    ```sql
+    DELETE FROM agent_messages 
+    WHERE timestamp < NOW() - INTERVAL '90 days';
+    ```
+  </Tab>
+  
+  <Tab title="By agent">
+    ```sql
+    DELETE FROM agent_messages 
+    WHERE agent_id = 'specific-agent-id'
+      AND timestamp < NOW() - INTERVAL '30 days';
+    ```
+  </Tab>
+</Tabs>
+
+### Automated Cleanup (Cron)
+
+Create a cron job to run cleanup weekly:
+
+```bash
+# /etc/cron.weekly/manifest-cleanup
+#!/bin/bash
+psql $DATABASE_URL <<SQL
+DELETE FROM agent_messages WHERE timestamp < NOW() - INTERVAL '90 days';
+VACUUM ANALYZE agent_messages;
+SQL
+```
+
+Make executable:
+
+```bash
+chmod +x /etc/cron.weekly/manifest-cleanup
+```
+
+## Backups
+
+### pg_dump (Full Backup)
+
+Backup the entire database:
+
+```bash
+pg_dump -U manifest -d manifest -F c -b -v -f manifest_backup_$(date +%Y%m%d).dump
+```
+
+**Options:**
+
+- `-F c` — Custom format (compressed)
+- `-b` — Include large objects
+- `-v` — Verbose output
+
+**Restore:**
+
+```bash
+pg_restore -U manifest -d manifest -v manifest_backup_20260304.dump
+```
+
+### Schema-Only Backup
+
+Backup just the schema (no data):
+
+```bash
+pg_dump -U manifest -d manifest --schema-only -f manifest_schema.sql
+```
+
+Useful for:
+
+- Comparing schema changes
+- Setting up test environments
+- Documentation
+
+### Data-Only Backup
+
+Backup just the data:
+
+```bash
+pg_dump -U manifest -d manifest --data-only -F c -f manifest_data.dump
+```
+
+### Continuous Archiving (WAL)
+
+For point-in-time recovery, enable WAL archiving:
+
+1. Edit `postgresql.conf`:
+
+```ini
+wal_level = replica
+archive_mode = on
+archive_command = 'cp %p /var/lib/postgresql/wal_archive/%f'
+```
+
+2. Create archive directory:
+
+```bash
+sudo mkdir -p /var/lib/postgresql/wal_archive
+sudo chown postgres:postgres /var/lib/postgresql/wal_archive
+```
+
+3. Restart PostgreSQL:
+
+```bash
+sudo systemctl restart postgresql
+```
+
+4. Take a base backup:
+
+```bash
+pg_basebackup -U manifest -D /var/backups/postgres/base -F tar -X fetch
+```
+
+### Automated Backups (Cron)
+
+Create `/etc/cron.daily/manifest-backup`:
+
+```bash
+#!/bin/bash
+set -e
+
+BACKUP_DIR="/var/backups/manifest"
+RETENTION_DAYS=7
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+mkdir -p $BACKUP_DIR
+
+# Backup database
+pg_dump -U manifest -d manifest -F c \
+  -f $BACKUP_DIR/manifest_$TIMESTAMP.dump
+
+# Compress
+gzip $BACKUP_DIR/manifest_$TIMESTAMP.dump
+
+# Delete old backups
+find $BACKUP_DIR -name "manifest_*.dump.gz" -mtime +$RETENTION_DAYS -delete
+
+echo "Backup completed: manifest_$TIMESTAMP.dump.gz"
+```
+
+Make executable:
+
+```bash
+chmod +x /etc/cron.daily/manifest-backup
+```
+
+### Cloud Storage Backup
+
+Upload backups to S3:
+
+```bash
+#!/bin/bash
+BACKUP_FILE="manifest_$(date +%Y%m%d).dump"
+
+pg_dump -U manifest -d manifest -F c -f /tmp/$BACKUP_FILE
+aws s3 cp /tmp/$BACKUP_FILE s3://your-bucket/backups/
+rm /tmp/$BACKUP_FILE
+```
+
+## Performance Optimization
+
+### Indexes
+
+Manifest creates indexes automatically via migrations. Key indexes:
+
+```sql
+-- Most queries filter by tenant
+CREATE INDEX idx_agent_messages_tenant ON agent_messages(tenant_id);
+
+-- Time-series queries
+CREATE INDEX idx_agent_messages_timestamp ON agent_messages(timestamp);
+
+-- Agent filtering
+CREATE INDEX idx_agent_messages_agent ON agent_messages(agent_id);
+
+-- Composite index for common queries
+CREATE INDEX idx_agent_messages_tenant_timestamp 
+  ON agent_messages(tenant_id, timestamp DESC);
+```
+
+### Vacuum
+
+PostgreSQL autovacuum runs automatically, but you can manually trigger it:
+
+```sql
+VACUUM ANALYZE agent_messages;
+```
+
+Check last vacuum time:
+
+```sql
+SELECT 
+  relname,
+  last_vacuum,
+  last_autovacuum,
+  n_dead_tup,
+  n_live_tup
+FROM pg_stat_user_tables
+WHERE relname = 'agent_messages';
+```
+
+### Connection Pooling
+
+TypeORM manages a connection pool automatically. Default settings:
+
+- **Max connections**: 10
+- **Idle timeout**: 10s
+
+Adjust for high traffic:
+
+```typescript
+// packages/backend/src/database/database.module.ts
+{
+  type: 'postgres',
+  url: config.get<string>('app.databaseUrl'),
+  extra: {
+    max: 20,  // Increase pool size
+    idleTimeoutMillis: 30000,
+  },
+}
+```
+
+### Query Performance
+
+Monitor slow queries:
+
+```sql
+-- Enable slow query logging
+ALTER DATABASE manifest SET log_min_duration_statement = 1000;
+
+-- View slow queries
+SELECT 
+  query,
+  calls,
+  total_time,
+  mean_time,
+  max_time
+FROM pg_stat_statements
+ORDER BY mean_time DESC
+LIMIT 10;
+```
+
+## Troubleshooting
+
+### Connection Issues
+
+**Test connection:**
+
+```bash
+psql $DATABASE_URL -c "SELECT version();"
+```
+
+**Check if PostgreSQL is running:**
+
+```bash
+sudo systemctl status postgresql
+```
+
+**Check connection limits:**
+
+```sql
+SELECT * FROM pg_stat_activity;
+SELECT COUNT(*) FROM pg_stat_activity;
+```
+
+### Migration Failures
+
+**View migration status:**
+
+```bash
+cd packages/backend
+npm run migration:show
+```
+
+**Check migration table:**
+
+```sql
+SELECT * FROM migrations ORDER BY id DESC;
+```
+
+**Manually mark migration as executed (dangerous!):**
+
+```sql
+INSERT INTO migrations ("timestamp", "name") 
+VALUES (1772700000000, 'MigrationName1772700000000');
+```
+
+### Disk Space
+
+**Check database size:**
+
+```sql
+SELECT 
+  pg_database.datname,
+  pg_size_pretty(pg_database_size(pg_database.datname)) AS size
+FROM pg_database
+WHERE datname = 'manifest';
+```
+
+**Check table sizes:**
+
+```sql
+SELECT 
+  relname AS table_name,
+  pg_size_pretty(pg_total_relation_size(relid)) AS total_size,
+  pg_size_pretty(pg_relation_size(relid)) AS table_size,
+  pg_size_pretty(pg_total_relation_size(relid) - pg_relation_size(relid)) AS index_size
+FROM pg_catalog.pg_statio_user_tables
+ORDER BY pg_total_relation_size(relid) DESC;
+```
+
+### Lock Issues
+
+**View active locks:**
+
+```sql
+SELECT 
+  pg_stat_activity.pid,
+  pg_stat_activity.query,
+  pg_locks.mode,
+  pg_locks.granted
+FROM pg_stat_activity
+JOIN pg_locks ON pg_locks.pid = pg_stat_activity.pid
+WHERE pg_stat_activity.datname = 'manifest';
+```
+
+**Kill blocking query:**
+
+```sql
+SELECT pg_terminate_backend(pid)
+FROM pg_stat_activity
+WHERE pid = <pid_from_above>;
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/advanced/self-hosting/configuration">
+    Learn about all environment variables and options
+  </Card>
+  <Card title="Deployment Guide" icon="rocket" href="/advanced/self-hosting/deployment">
+    Deploy Manifest with Docker, Railway, or manual setup
+  </Card>
+</CardGroup>

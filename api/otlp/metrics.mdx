@@ -1,0 +1,455 @@
+---
+title: 'POST /otlp/v1/metrics'
+description: 'Ingest OpenTelemetry metrics for token usage and cost tracking'
+---
+
+## Overview
+
+The OTLP metrics endpoint accepts OpenTelemetry Protocol (OTLP) metric data in protobuf or JSON format. Metrics capture time-series data for token usage, costs, and other numerical measurements.
+
+## Endpoint
+
+```
+POST /otlp/v1/metrics
+```
+
+## Authentication
+
+<Warning>
+This endpoint requires Bearer token authentication using an Agent API key.
+</Warning>
+
+Include your agent API key in the `Authorization` header:
+
+```bash
+Authorization: Bearer mnfst_your_agent_api_key_here
+```
+
+**How to get an API key:**
+
+1. Create an agent in the Manifest dashboard or via the API
+2. The agent API key is automatically generated with the `mnfst_` prefix
+3. Retrieve it using the [Get Agent Key](/api/agents/get-key) endpoint
+
+### Local Mode Authentication
+
+In local mode (`MANIFEST_MODE=local`), loopback connections (127.0.0.1) bypass authentication. This is useful for development with the OpenClaw plugin in dev mode.
+
+## Content Types
+
+The endpoint accepts two content types:
+
+- **`application/x-protobuf`** (recommended) - Binary protobuf format, more efficient
+- **`application/json`** - JSON format for easier debugging
+
+Set the `Content-Type` header accordingly.
+
+## Request Body
+
+The request body follows the OTLP metrics specification. The top-level structure is `ExportMetricsServiceRequest`.
+
+### Structure
+
+<CodeGroup>
+
+```json JSON Format
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "my-agent" } },
+          { "key": "agent.name", "value": { "stringValue": "my-agent" } }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "openclaw-instrumentation",
+            "version": "1.0.0"
+          },
+          "metrics": [
+            {
+              "name": "gen_ai.usage.input_tokens",
+              "description": "Number of input tokens consumed",
+              "unit": "tokens",
+              "sum": {
+                "dataPoints": [
+                  {
+                    "asInt": 1500,
+                    "timeUnixNano": "1609459200000000000",
+                    "attributes": [
+                      { "key": "agent.name", "value": { "stringValue": "my-agent" } }
+                    ]
+                  }
+                ],
+                "aggregationTemporality": 2,
+                "isMonotonic": true
+              }
+            },
+            {
+              "name": "gen_ai.usage.cost",
+              "description": "Cost in USD",
+              "unit": "USD",
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "asDouble": 0.045,
+                    "timeUnixNano": "1609459200000000000"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+```typescript TypeScript Interface
+interface OtlpExportMetricsServiceRequest {
+  resourceMetrics: OtlpResourceMetrics[];
+}
+
+interface OtlpResourceMetrics {
+  resource: OtlpResource;
+  scopeMetrics: OtlpScopeMetrics[];
+}
+
+interface OtlpScopeMetrics {
+  scope: OtlpInstrumentationScope;
+  metrics: OtlpMetric[];
+}
+
+interface OtlpMetric {
+  name: string;              // Metric name (e.g., "gen_ai.usage.input_tokens")
+  description?: string;      // Optional description
+  unit?: string;             // Optional unit (e.g., "tokens", "USD")
+  gauge?: OtlpGauge;         // Gauge metric (instantaneous value)
+  sum?: OtlpSum;             // Sum metric (cumulative or delta)
+}
+
+interface OtlpGauge {
+  dataPoints: OtlpNumberDataPoint[];
+}
+
+interface OtlpSum {
+  dataPoints: OtlpNumberDataPoint[];
+  aggregationTemporality: number;  // 1=DELTA, 2=CUMULATIVE
+  isMonotonic: boolean;             // True for counters
+}
+
+interface OtlpNumberDataPoint {
+  attributes?: OtlpKeyValue[];      // Data point attributes
+  startTimeUnixNano?: string;       // Optional start time (for delta metrics)
+  timeUnixNano: string;             // Timestamp in nanoseconds
+  asInt?: string | number;          // Integer value
+  asDouble?: number;                // Floating-point value
+}
+```
+
+</CodeGroup>
+
+### Recognized Metrics
+
+Manifest automatically processes specific metric names:
+
+#### Token Usage Metrics
+
+| Metric Name | Type | Description |
+|-------------|------|-------------|
+| `gen_ai.usage.input_tokens` | Sum | Number of input tokens consumed |
+| `gen_ai.usage.output_tokens` | Sum | Number of output tokens generated |
+| `gen_ai.usage.total_tokens` | Sum | Total tokens (input + output) |
+| `gen_ai.usage.cache_read_tokens` | Sum | Cached input tokens read |
+| `gen_ai.usage.cache_creation_tokens` | Sum | Tokens used for cache creation |
+
+#### Cost Metrics
+
+| Metric Name | Type | Description |
+|-------------|------|-------------|
+| `gen_ai.usage.cost` | Gauge | Cost in USD |
+| `gen_ai.cost.usd` | Gauge | Cost in USD (alternative name) |
+
+**Note:** Only the above metrics are processed. Other metric names are ignored.
+
+### Attributes
+
+#### Resource Attributes
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `service.name` | string | Service identifier (fallback for agent name) |
+| `agent.name` | string | Agent name (overrides service.name) |
+
+#### Data Point Attributes
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `agent.name` | string | Agent name (overrides resource attribute) |
+
+## Response
+
+<ResponseField name="partialSuccess" type="object" required>
+  Partial success information (omitted if all data points accepted)
+  
+  <Expandable title="properties">
+    <ResponseField name="rejectedDataPoints" type="number">
+      Number of rejected data points (0 if all accepted)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseExample>
+```json 200 - Success
+{
+  "partialSuccess": {}
+}
+```
+
+```json 401 - Unauthorized
+{
+  "statusCode": 401,
+  "message": "Invalid API key"
+}
+```
+</ResponseExample>
+
+## Examples
+
+### cURL with JSON
+
+```bash
+curl -X POST https://manifest.build/otlp/v1/metrics \
+  -H "Authorization: Bearer mnfst_your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resourceMetrics": [{
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "my-agent" } }
+        ]
+      },
+      "scopeMetrics": [{
+        "scope": { "name": "my-instrumentation" },
+        "metrics": [
+          {
+            "name": "gen_ai.usage.input_tokens",
+            "sum": {
+              "dataPoints": [{
+                "asInt": 1500,
+                "timeUnixNano": "1609459200000000000"
+              }],
+              "aggregationTemporality": 2,
+              "isMonotonic": true
+            }
+          },
+          {
+            "name": "gen_ai.usage.output_tokens",
+            "sum": {
+              "dataPoints": [{
+                "asInt": 300,
+                "timeUnixNano": "1609459200000000000"
+              }],
+              "aggregationTemporality": 2,
+              "isMonotonic": true
+            }
+          },
+          {
+            "name": "gen_ai.usage.cost",
+            "gauge": {
+              "dataPoints": [{
+                "asDouble": 0.025,
+                "timeUnixNano": "1609459200000000000"
+              }]
+            }
+          }
+        ]
+      }]
+    }]
+  }'
+```
+
+### OpenTelemetry SDK (Node.js)
+
+```javascript
+import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
+import { MeterProvider, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
+import { Resource } from '@opentelemetry/resources';
+
+const exporter = new OTLPMetricExporter({
+  url: 'https://manifest.build/otlp/v1/metrics',
+  headers: {
+    'Authorization': 'Bearer mnfst_your_api_key'
+  }
+});
+
+const meterProvider = new MeterProvider({
+  resource: Resource.default().merge(new Resource({
+    'service.name': 'my-agent',
+    'agent.name': 'my-agent'
+  })),
+  readers: [
+    new PeriodicExportingMetricReader({
+      exporter,
+      exportIntervalMillis: 10000  // Export every 10 seconds
+    })
+  ]
+});
+
+const meter = meterProvider.getMeter('my-instrumentation');
+
+const inputTokensCounter = meter.createCounter('gen_ai.usage.input_tokens', {
+  description: 'Number of input tokens consumed',
+  unit: 'tokens'
+});
+
+const outputTokensCounter = meter.createCounter('gen_ai.usage.output_tokens', {
+  description: 'Number of output tokens generated',
+  unit: 'tokens'
+});
+
+const costGauge = meter.createObservableGauge('gen_ai.usage.cost', {
+  description: 'Cost in USD',
+  unit: 'USD'
+});
+
+// Record metrics
+inputTokensCounter.add(1500);
+outputTokensCounter.add(300);
+```
+
+## Protobuf Format
+
+When using `application/x-protobuf`, the request body must be a binary-encoded protobuf message following the OTLP metrics specification.
+
+**Protobuf message definition:**
+
+```protobuf
+message ExportMetricsServiceRequest {
+  repeated ResourceMetrics resource_metrics = 1;
+}
+
+message ResourceMetrics {
+  Resource resource = 1;
+  repeated ScopeMetrics scope_metrics = 2;
+}
+
+message ScopeMetrics {
+  InstrumentationScope scope = 1;
+  repeated Metric metrics = 2;
+}
+
+message Metric {
+  string name = 1;
+  string description = 2;
+  string unit = 3;
+  oneof data {
+    Gauge gauge = 5;
+    Sum sum = 7;
+  }
+}
+
+message Gauge {
+  repeated NumberDataPoint data_points = 1;
+}
+
+message Sum {
+  repeated NumberDataPoint data_points = 1;
+  AggregationTemporality aggregation_temporality = 2;
+  bool is_monotonic = 3;
+}
+
+message NumberDataPoint {
+  repeated KeyValue attributes = 7;
+  fixed64 start_time_unix_nano = 2;
+  fixed64 time_unix_nano = 3;
+  oneof value {
+    double as_double = 4;
+    sfixed64 as_int = 6;
+  }
+}
+
+enum AggregationTemporality {
+  AGGREGATION_TEMPORALITY_UNSPECIFIED = 0;
+  AGGREGATION_TEMPORALITY_DELTA = 1;
+  AGGREGATION_TEMPORALITY_CUMULATIVE = 2;
+}
+```
+
+See the [OpenTelemetry Protocol Specification](https://opentelemetry.io/docs/specs/otlp/) for the complete protobuf schema.
+
+## Data Processing
+
+When metrics are ingested, Manifest:
+
+1. **Decodes** the protobuf or JSON payload
+2. **Filters** metrics by name (only token and cost metrics are processed)
+3. **Extracts** data points and attributes
+4. **Stores** metrics in the database:
+   - Token metrics → `token_usage_snapshots` table
+   - Cost metrics → `cost_snapshots` table
+5. **Emits** real-time events to connected dashboard clients via SSE
+
+### Data Point Mapping
+
+Each data point is stored with:
+
+- `tenant_id` - Extracted from the authenticated agent API key
+- `agent_id` - Extracted from the authenticated agent API key
+- `agent_name` - From resource or data point attributes
+- `snapshot_time` - Timestamp from `timeUnixNano`
+- Metric-specific fields (e.g., `input_tokens`, `output_tokens`, `cost_usd`)
+
+## Rate Limiting
+
+OTLP endpoints use in-memory API key caching (5-minute TTL) to minimize database lookups. Each successful authentication is cached for 5 minutes.
+
+## Error Handling
+
+| Status Code | Description |
+|-------------|-------------|
+| 200 | Success (all data points accepted) |
+| 401 | Unauthorized (invalid or expired API key) |
+| 415 | Unsupported Media Type (invalid Content-Type) |
+| 500 | Internal Server Error |
+
+## Use Cases
+
+### Real-Time Token Tracking
+
+Send token usage metrics after each LLM call to track consumption in real-time:
+
+```javascript
+// After making an LLM call
+const usage = response.usage;
+inputTokensCounter.add(usage.input_tokens);
+outputTokensCounter.add(usage.output_tokens);
+```
+
+### Cost Monitoring
+
+Send cost metrics to track spending:
+
+```javascript
+const cost = calculateCost(usage, modelPricing);
+costGauge.record(cost);
+```
+
+### Dashboard Analytics
+
+Metrics are aggregated and displayed in the Manifest dashboard:
+
+- Token usage over time (hourly/daily/weekly)
+- Cost trends and breakdowns
+- Per-agent usage statistics
+
+## See Also
+
+- [POST /otlp/v1/traces](/api/otlp/traces) - Ingest traces
+- [POST /otlp/v1/logs](/api/otlp/logs) - Ingest logs
+- [GET /api/v1/tokens](/api/analytics/tokens) - Query token analytics
+- [GET /api/v1/costs](/api/analytics/costs) - Query cost analytics
+- [OpenClaw Setup Guide](/guides/openclaw-setup) - Configure the OpenClaw plugin

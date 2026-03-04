@@ -1,0 +1,440 @@
+---
+title: Alerts & Limits
+description: Set up email alerts and hard limits to control LLM spending
+---
+
+Manifest's alerting system lets you monitor usage and prevent runaway costs with two types of rules:
+
+- **Email alerts**: Get notified when thresholds are exceeded
+- **Hard limits**: Automatically block proxy requests when usage exceeds a threshold
+
+Both rule types support token-based and cost-based thresholds over hourly, daily, weekly, or monthly periods.
+
+## Rule Types
+
+### Email Alerts
+
+Send an email notification when a threshold is crossed. Requires an email provider to be configured (Mailgun, Resend, or SMTP).
+
+```typescript
+// From packages/backend/src/notifications/dto/notification-rule.dto.ts:4-22
+{
+  agent_name: string,
+  metric_type: 'tokens' | 'cost',  // What to measure
+  threshold: number,               // Alert trigger value
+  period: 'hour' | 'day' | 'week' | 'month',
+  action: 'notify'                 // Send email
+}
+```
+
+**Example**: Alert when daily cost exceeds $10.
+
+### Hard Limits
+
+Block proxy requests (`/v1/chat/completions`) when usage exceeds the threshold. Requests return `403 Forbidden` until the next period starts.
+
+```typescript
+{
+  agent_name: string,
+  metric_type: 'tokens' | 'cost',
+  threshold: number,
+  period: 'hour' | 'day' | 'week' | 'month',
+  action: 'block'                  // Block requests
+}
+```
+
+**Example**: Block requests when hourly tokens exceed 1,000,000.
+
+<Warning>
+Hard limits require routing to be enabled. They only affect proxy requests (`/v1/chat/completions`). Direct LLM calls and OTLP ingestion are not blocked.
+</Warning>
+
+### Combined Rules
+
+You can create a rule with both actions:
+
+```typescript
+{
+  action: 'both'  // Email alert + block requests
+}
+```
+
+## Creating Rules
+
+Rules are created via the UI (Limits page) or API:
+
+```http
+POST /api/v1/notifications
+Content-Type: application/json
+
+{
+  "agent_name": "my-agent",
+  "metric_type": "cost",
+  "threshold": 10,
+  "period": "day",
+  "action": "notify"
+}
+```
+
+Response:
+
+```json
+{
+  "id": "rule-uuid",
+  "agent_name": "my-agent",
+  "metric_type": "cost",
+  "threshold": 10,
+  "period": "day",
+  "action": "notify",
+  "is_active": true,
+  "trigger_count": 0,
+  "created_at": "2024-03-04T12:00:00Z"
+}
+```
+
+## Threshold Checking
+
+Manifest checks thresholds in two ways:
+
+### 1. Cron-Based Checks (Email Alerts)
+
+A background job runs every 5 minutes to check all email alert rules:
+
+```typescript
+// From packages/backend/src/notifications/services/notification-cron.service.ts
+@Cron('*/5 * * * *')  // Every 5 minutes
+async checkThresholds(): Promise<number> {
+  const rules = await this.ds.query(
+    `SELECT * FROM notification_rules
+     WHERE is_active = $1 AND (action = 'notify' OR action = 'both')`,
+    [this.dialect === 'sqlite' ? 1 : true]
+  );
+
+  let triggered = 0;
+  for (const rule of rules) {
+    const shouldTrigger = await this.shouldTriggerNotification(rule);
+    if (shouldTrigger) {
+      await this.sendNotification(rule);
+      triggered++;
+    }
+  }
+  return triggered;
+}
+```
+
+### 2. Request-Time Checks (Hard Limits)
+
+Hard limits are checked on every proxy request:
+
+```typescript
+// From packages/backend/src/notifications/services/limit-check.service.ts
+async checkLimit(tenantId: string, agentName: string): Promise<void> {
+  // Check cache first (5-minute TTL)
+  const cacheKey = `${tenantId}:${agentName}`;
+  const cached = this.limitCache.get(cacheKey);
+  if (cached) {
+    if (cached.blocked) throw new ForbiddenException('Hard limit exceeded');
+    return;
+  }
+
+  // Query active hard limit rules
+  const rules = await this.ds.query(
+    `SELECT * FROM notification_rules
+     WHERE tenant_id = $1 AND agent_name = $2
+       AND is_active = $3 AND (action = 'block' OR action = 'both')`,
+    [tenantId, agentName, this.dialect === 'sqlite' ? 1 : true]
+  );
+
+  // Check each rule's consumption
+  for (const rule of rules) {
+    const consumption = await this.getConsumption(tenantId, agentName, rule);
+    if (consumption >= Number(rule.threshold)) {
+      this.limitCache.set(cacheKey, { blocked: true, until: this.getPeriodEnd(rule.period) });
+      throw new ForbiddenException(`Hard limit exceeded: ${rule.metric_type} threshold`);
+    }
+  }
+
+  this.limitCache.set(cacheKey, { blocked: false, until: Date.now() + 300_000 });
+}
+```
+
+The cache prevents repeated database queries for every request.
+
+## Period Calculations
+
+Periods are computed using rolling windows:
+
+- **Hour**: Last 60 minutes from now
+- **Day**: Last 24 hours from now
+- **Week**: Last 7 days from now
+- **Month**: Last 30 days from now
+
+```typescript
+// From packages/backend/src/notifications/services/notification-rules.service.ts
+getPeriodBounds(period: string): { start: string; end: string } {
+  const now = new Date();
+  const end = now.toISOString();
+  let start: Date;
+
+  switch (period) {
+    case 'hour':
+      start = new Date(now.getTime() - 60 * 60 * 1000);
+      break;
+    case 'day':
+      start = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      break;
+    case 'week':
+      start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      break;
+    case 'month':
+      start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      break;
+    default:
+      start = now;
+  }
+
+  return { start: start.toISOString(), end };
+}
+```
+
+## Email Providers
+
+Manifest supports three email providers:
+
+### Mailgun
+
+```typescript
+{
+  provider: 'mailgun',
+  apiKey: 'mg_api_key',
+  domain: 'mg.example.com',
+  notificationEmail: 'alerts@example.com'
+}
+```
+
+### Resend
+
+```typescript
+{
+  provider: 'resend',
+  apiKey: 're_api_key',
+  notificationEmail: 'alerts@example.com'
+}
+```
+
+### SMTP (Sendgrid, Gmail, etc.)
+
+```typescript
+{
+  provider: 'sendgrid',
+  apiKey: 'smtp_password',
+  domain: 'smtp.sendgrid.net:587',  // host:port
+  notificationEmail: 'alerts@example.com'
+}
+```
+
+### Configure via API
+
+```http
+POST /api/v1/notifications/email-provider
+Content-Type: application/json
+
+{
+  "provider": "resend",
+  "apiKey": "re_...",
+  "notificationEmail": "alerts@example.com"
+}
+```
+
+API keys are encrypted with AES-256-GCM before storage:
+
+```typescript
+// From packages/backend/src/notifications/services/email-provider-config.service.ts
+const encrypted = encrypt(body.apiKey, getEncryptionSecret());
+await this.ds.query(
+  `INSERT INTO email_provider_config (id, user_id, provider, api_key_encrypted, domain, notification_email, created_at)
+   VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+  [uuid(), userId, body.provider, encrypted, body.domain, body.notificationEmail, now]
+);
+```
+
+## Email Templates
+
+Notification emails include:
+
+- **Subject**: `Manifest Alert: {metric_type} threshold exceeded`
+- **Body**:
+  - Agent name
+  - Metric type (tokens or cost)
+  - Threshold value
+  - Current consumption
+  - Period (hour, day, week, month)
+  - Link to dashboard
+
+```typescript
+// From packages/backend/src/notifications/services/notification-email.service.ts
+const subject = `Manifest Alert: ${rule.metric_type} threshold exceeded`;
+const body = `
+Agent: ${rule.agent_name}
+Metric: ${rule.metric_type}
+Threshold: ${formatThreshold(rule)}
+Current: ${formatConsumption(consumption, rule.metric_type)}
+Period: ${rule.period}
+
+View details: ${dashboardUrl}/agents/${encodeURIComponent(rule.agent_name)}/overview
+`;
+```
+
+## Notification Logs
+
+Every triggered alert is logged to `notification_logs`:
+
+```typescript
+{
+  id: string,
+  rule_id: string,
+  triggered_at: string,
+  consumption_value: number,
+  threshold_value: number,
+  period_start: string,
+  period_end: string
+}
+```
+
+The UI shows `trigger_count` — the total number of times a rule has fired.
+
+## UI Components
+
+The Limits page (`/agents/{agentName}/limits`) displays:
+
+### Rules Table
+
+```typescript
+// From packages/frontend/src/pages/Limits.tsx:266-338
+<table class="notif-table">
+  <thead>
+    <tr>
+      <th>Type</th>
+      <th>Threshold</th>
+      <th>Triggered</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    <For each={rules()}>
+      {(rule) => (
+        <tr>
+          <td>
+            {/* Email alert icon */}
+            {hasEmailAction(rule.action) && <AlertIcon />}
+            {/* Hard limit icon */}
+            {hasBlockAction(rule.action) && <LimitIcon />}
+          </td>
+          <td>{formatThreshold(rule)} {rule.period}</td>
+          <td>{rule.trigger_count}</td>
+          <td><button onClick={() => handleEdit(rule)}>Edit</button></td>
+        </tr>
+      )}
+    </For>
+  </tbody>
+</table>
+```
+
+### Warning Banner
+
+When a hard limit is active and triggered:
+
+```typescript
+// From packages/frontend/src/pages/Limits.tsx:182-203
+<Show when={blockRulesExceeded()}>
+  <div class="limits-warning-banner">
+    <span>
+      One or more hard limits have been triggered — new proxy requests for this agent
+      will be blocked until the usage resets in the next period.
+    </span>
+  </div>
+</Show>
+```
+
+### Email Provider Setup
+
+In local mode, the Limits page shows an email provider setup card:
+
+```typescript
+// From packages/frontend/src/pages/Limits.tsx:237-250
+<Show when={isLocalMode()}>
+  <Show
+    when={emailProvider()}
+    fallback={<EmailProviderSetup onConfigured={refetchProvider} />}
+  >
+    <ProviderBanner
+      config={emailProvider()!}
+      onEdit={() => setShowEditProvider(true)}
+      onRemove={() => setShowRemoveProvider(true)}
+    />
+  </Show>
+</Show>
+```
+
+In cloud mode, alerts are sent to the user's account email (from Better Auth session).
+
+## API Endpoints
+
+### List Rules
+
+```http
+GET /api/v1/notifications?agent_name=my-agent
+```
+
+### Create Rule
+
+```http
+POST /api/v1/notifications
+```
+
+### Update Rule
+
+```http
+PATCH /api/v1/notifications/{ruleId}
+```
+
+### Delete Rule
+
+```http
+DELETE /api/v1/notifications/{ruleId}
+```
+
+### Test Email Provider
+
+```http
+POST /api/v1/notifications/email-provider/test
+Content-Type: application/json
+
+{
+  "provider": "resend",
+  "apiKey": "re_...",
+  "to": "test@example.com"
+}
+```
+
+<Info>
+Hard limits are enforced only for proxy requests (`/v1/chat/completions`). They do not affect OTLP ingestion or direct API calls.
+</Info>
+
+## Cache Invalidation
+
+When a rule is created, updated, or deleted, the limit check cache is invalidated:
+
+```typescript
+// From packages/backend/src/notifications/notifications.controller.ts:96-101
+@Post()
+async createRule(@Body() dto: CreateNotificationRuleDto, @CurrentUser() user: AuthUser) {
+  const rule = await this.rulesService.createRule(user.id, dto);
+  if (rule.action === 'block' || rule.action === 'both') {
+    this.limitCheck.invalidateCache(rule.tenant_id, rule.agent_name);
+  }
+  return rule;
+}
+```
+
+This ensures the next proxy request re-checks the database for updated rules.

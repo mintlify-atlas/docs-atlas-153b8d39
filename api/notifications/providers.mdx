@@ -1,0 +1,458 @@
+---
+title: 'Email Providers'
+description: 'Configure email providers for notification delivery'
+---
+
+## Overview
+
+Manifest supports multiple email providers for sending notification alerts. You can configure Mailgun, Resend, or SendGrid as your delivery service.
+
+## Get Email Provider Configuration
+
+<api-endpoint method="GET" path="/api/v1/notifications/email-provider" />
+
+Retrieve your current email provider configuration. API keys are never returned — only a prefix for verification.
+
+### Response Fields
+
+<ResponseField name="configured" type="boolean">
+  Whether an email provider is configured. If `false`, all other fields are omitted.
+</ResponseField>
+
+<ResponseField name="provider" type="string">
+  The configured provider: `mailgun`, `resend`, or `sendgrid`
+</ResponseField>
+
+<ResponseField name="domain" type="string | null">
+  Domain used for sending (Mailgun only). For other providers, this is `null`.
+</ResponseField>
+
+<ResponseField name="keyPrefix" type="string">
+  First 8 characters of the API key for verification (e.g., `sk-live_`)
+</ResponseField>
+
+<ResponseField name="is_active" type="boolean">
+  Whether the provider is active and ready to send emails
+</ResponseField>
+
+<ResponseField name="notificationEmail" type="string | null">
+  Email address where notifications are sent. If `null`, falls back to user's account email.
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET 'https://api.manifest.build/api/v1/notifications/email-provider' \
+  -H 'Cookie: better-auth.session_token=YOUR_SESSION_TOKEN'
+```
+
+### Example Response (Configured)
+
+```json
+{
+  "provider": "resend",
+  "domain": null,
+  "keyPrefix": "re_123ab",
+  "is_active": true,
+  "notificationEmail": "alerts@company.com"
+}
+```
+
+### Example Response (Not Configured)
+
+```json
+{
+  "configured": false
+}
+```
+
+## Configure Email Provider
+
+<api-endpoint method="POST" path="/api/v1/notifications/email-provider" />
+
+Set up or update your email provider configuration. API keys are stored encrypted using AES-256-GCM.
+
+### Request Body
+
+<ParamField body="provider" type="string" required>
+  Email provider to use:
+  - `resend` - [Resend](https://resend.com) (recommended for new users)
+  - `mailgun` - [Mailgun](https://mailgun.com)
+  - `sendgrid` - [SendGrid](https://sendgrid.com)
+</ParamField>
+
+<ParamField body="apiKey" type="string">
+  API key from your provider. Required when creating a new configuration. Optional when updating an existing one (provider/domain can be changed without resupplying the key).
+  
+  Minimum length: 8 characters
+</ParamField>
+
+<ParamField body="domain" type="string">
+  **Required for Mailgun only.** Your verified sending domain (e.g., `mg.company.com`). Ignored for other providers.
+</ParamField>
+
+<ParamField body="notificationEmail" type="string">
+  Email address where alerts should be sent. If omitted, notifications go to your account email.
+</ParamField>
+
+### Example Request (Resend)
+
+```bash
+curl -X POST 'https://api.manifest.build/api/v1/notifications/email-provider' \
+  -H 'Cookie: better-auth.session_token=YOUR_SESSION_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "provider": "resend",
+    "apiKey": "re_123456789_abcdefghijklmnop",
+    "notificationEmail": "alerts@company.com"
+  }'
+```
+
+### Example Request (Mailgun)
+
+```bash
+curl -X POST 'https://api.manifest.build/api/v1/notifications/email-provider' \
+  -H 'Cookie: better-auth.session_token=YOUR_SESSION_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "provider": "mailgun",
+    "apiKey": "key-1234567890abcdef1234567890abcdef",
+    "domain": "mg.company.com",
+    "notificationEmail": "alerts@company.com"
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "provider": "resend",
+  "domain": null,
+  "keyPrefix": "re_123ab",
+  "is_active": true,
+  "notificationEmail": "alerts@company.com"
+}
+```
+
+## Test Email Provider
+
+<api-endpoint method="POST" path="/api/v1/notifications/email-provider/test" />
+
+Test an email provider configuration before saving it. Sends a test email to verify credentials.
+
+### Request Body
+
+<ParamField body="provider" type="string" required>
+  Provider to test: `resend`, `mailgun`, or `sendgrid`
+</ParamField>
+
+<ParamField body="apiKey" type="string" required>
+  API key to test
+</ParamField>
+
+<ParamField body="domain" type="string">
+  Domain to test (Mailgun only)
+</ParamField>
+
+<ParamField body="to" type="string" required>
+  Email address to send the test message to
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X POST 'https://api.manifest.build/api/v1/notifications/email-provider/test' \
+  -H 'Cookie: better-auth.session_token=YOUR_SESSION_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "provider": "resend",
+    "apiKey": "re_123456789_abcdefghijklmnop",
+    "to": "test@company.com"
+  }'
+```
+
+### Example Response (Success)
+
+```json
+{
+  "success": true
+}
+```
+
+### Example Response (Failure)
+
+```json
+{
+  "success": false,
+  "error": "Invalid API key"
+}
+```
+
+## Test Saved Configuration
+
+<api-endpoint method="POST" path="/api/v1/notifications/email-provider/test-saved" />
+
+Send a test email using your saved provider configuration.
+
+### Request Body
+
+<ParamField body="to" type="string" required>
+  Email address to send the test message to
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X POST 'https://api.manifest.build/api/v1/notifications/email-provider/test-saved' \
+  -H 'Cookie: better-auth.session_token=YOUR_SESSION_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "to": "test@company.com"
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "success": true
+}
+```
+
+## Delete Email Provider
+
+<api-endpoint method="DELETE" path="/api/v1/notifications/email-provider" />
+
+Remove your email provider configuration. Existing notification rules remain but will not send emails.
+
+### Example Request
+
+```bash
+curl -X DELETE 'https://api.manifest.build/api/v1/notifications/email-provider' \
+  -H 'Cookie: better-auth.session_token=YOUR_SESSION_TOKEN'
+```
+
+### Example Response
+
+```json
+{
+  "ok": true
+}
+```
+
+## Get Notification Email
+
+<api-endpoint method="GET" path="/api/v1/notifications/notification-email" />
+
+Retrieve the email address configured for receiving notifications.
+
+### Response Fields
+
+<ResponseField name="email" type="string | null">
+  The configured notification email address, or `null` if not set
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET 'https://api.manifest.build/api/v1/notifications/notification-email' \
+  -H 'Cookie: better-auth.session_token=YOUR_SESSION_TOKEN'
+```
+
+### Example Response
+
+```json
+{
+  "email": "alerts@company.com"
+}
+```
+
+## Set Notification Email
+
+<api-endpoint method="POST" path="/api/v1/notifications/notification-email" />
+
+Update the email address where notifications are sent.
+
+### Request Body
+
+<ParamField body="email" type="string" required>
+  Valid email address. Will be normalized to lowercase.
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X POST 'https://api.manifest.build/api/v1/notifications/notification-email' \
+  -H 'Cookie: better-auth.session_token=YOUR_SESSION_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "email": "alerts@company.com"
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "saved": true
+}
+```
+
+## Provider Setup Guides
+
+### Resend (Recommended)
+
+Resend offers the simplest setup with generous free tier:
+
+1. Sign up at [resend.com](https://resend.com)
+2. Navigate to **API Keys** in the dashboard
+3. Click **Create API Key**
+4. Copy the key (starts with `re_`)
+5. Use it in the configuration:
+
+```json
+{
+  "provider": "resend",
+  "apiKey": "re_xxxxxxxxxxxx"
+}
+```
+
+**Free tier**: 100 emails/day, 3,000/month
+
+### Mailgun
+
+Mailgun requires domain verification:
+
+1. Sign up at [mailgun.com](https://mailgun.com)
+2. Go to **Sending** → **Domains**
+3. Add and verify your domain (DNS records required)
+4. Navigate to **API Keys** and copy your private API key
+5. Use both domain and key:
+
+```json
+{
+  "provider": "mailgun",
+  "apiKey": "key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "domain": "mg.yourdomain.com"
+}
+```
+
+**Free tier**: 5,000 emails for first 3 months
+
+### SendGrid
+
+SendGrid offers high deliverability:
+
+1. Sign up at [sendgrid.com](https://sendgrid.com)
+2. Go to **Settings** → **API Keys**
+3. Click **Create API Key**
+4. Select **Full Access** or **Mail Send** permission
+5. Copy the key (starts with `SG.`)
+6. Use it in the configuration:
+
+```json
+{
+  "provider": "sendgrid",
+  "apiKey": "SG.xxxxxxxxxxxx"
+}
+```
+
+**Free tier**: 100 emails/day forever
+
+## Email Content
+
+Notification emails include:
+
+- **Subject**: Agent name and threshold type
+- **Body**: 
+  - Agent name
+  - Metric type (tokens or cost)
+  - Current usage
+  - Threshold value
+  - Time period
+  - Timestamp of alert
+  - Link to agent dashboard
+
+**Sender address**:
+- For Mailgun: `noreply@{your-domain}`
+- For others: `noreply@manifest.build` (or `NOTIFICATION_FROM_EMAIL` env var)
+
+## Security
+
+### API Key Storage
+
+API keys are encrypted before storage:
+
+- **Algorithm**: AES-256-GCM
+- **Key derivation**: From `BETTER_AUTH_SECRET` environment variable
+- **Storage**: `email_provider_configs.api_key_encrypted` column
+
+### Key Rotation
+
+To rotate your provider API key:
+
+1. Generate a new key in your provider dashboard
+2. POST to `/api/v1/notifications/email-provider` with the new `apiKey`
+3. The old key is immediately replaced
+4. Test with `/api/v1/notifications/email-provider/test-saved`
+
+### Access Control
+
+Email provider configurations are user-scoped. Each user can only:
+
+- View their own configuration
+- Update their own configuration
+- Delete their own configuration
+
+API keys are never returned in responses — only the first 8 characters for verification.
+
+## Troubleshooting
+
+### Test Email Not Received
+
+1. Check spam/junk folder
+2. Verify domain is properly configured (Mailgun)
+3. Check provider dashboard for delivery logs
+4. Ensure API key has send permissions
+5. Test with `/api/v1/notifications/email-provider/test-saved`
+
+### "Provider returned failure"
+
+- **Resend**: Check API key is active and not expired
+- **Mailgun**: Verify domain DNS records are correct
+- **SendGrid**: Ensure API key has Mail Send permission
+
+### "Invalid API key"
+
+- API key format is incorrect for the provider
+- Key was revoked in provider dashboard
+- Wrong provider selected
+
+### Notifications Not Sending
+
+1. Verify provider is configured: `GET /api/v1/notifications/email-provider`
+2. Check `is_active` is `true`
+3. Ensure notification rules have `action` of `notify` or `both`
+4. Verify `notificationEmail` is set or user has account email
+5. Check backend logs for cron job execution
+
+## Rate Limits
+
+Provider rate limits vary:
+
+| Provider | Free Tier Limit | Recommended Max Rules |
+|----------|----------------|----------------------|
+| Resend | 100/day | 10 |
+| Mailgun | 5,000/3mo | 50 |
+| SendGrid | 100/day | 10 |
+
+Manifest checks rules every 5 minutes. With 10 active rules, that's ~2,880 potential emails per day if all rules trigger continuously (unlikely in practice).
+
+## Notes
+
+- Only one provider can be active at a time
+- Changing providers does not affect existing notification rules
+- Deleting the provider configuration does not delete notification rules
+- Email templates are rendered using `@react-email/render`
+- All email addresses are normalized to lowercase before storage
+- The `domain` parameter is required for Mailgun, ignored for others
