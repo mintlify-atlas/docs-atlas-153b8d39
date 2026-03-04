@@ -1,0 +1,164 @@
+{
+  "projectType": "saas",
+  "projectName": "Manifest",
+  "projectDescription": "Smart LLM routing and observability platform for OpenClaw agents that cuts AI costs up to 70%",
+  "theme": "aspen",
+  "primaryColor": "#3ccfb1",
+  "lightColor": "#293581",
+  "darkColor": "#ece4db",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/overview",
+              "concepts/routing",
+              "concepts/observability",
+              "concepts/architecture",
+              "concepts/cloud-vs-local"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/dashboard",
+              "features/cost-tracking",
+              "features/alerts",
+              "features/model-management",
+              "features/routing-config"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/openclaw-setup",
+              "guides/local-mode",
+              "guides/cloud-mode",
+              "guides/multi-agent",
+              "guides/custom-providers"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/introduction",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Analytics",
+            "pages": [
+              "api/analytics/overview",
+              "api/analytics/tokens",
+              "api/analytics/costs",
+              "api/analytics/messages"
+            ]
+          },
+          {
+            "group": "Agents",
+            "pages": [
+              "api/agents/list",
+              "api/agents/create",
+              "api/agents/get-key",
+              "api/agents/rotate-key",
+              "api/agents/delete"
+            ]
+          },
+          {
+            "group": "Routing",
+            "pages": [
+              "api/routing/config",
+              "api/routing/resolve",
+              "api/routing/proxy"
+            ]
+          },
+          {
+            "group": "OTLP",
+            "pages": [
+              "api/otlp/traces",
+              "api/otlp/metrics",
+              "api/otlp/logs"
+            ]
+          },
+          {
+            "group": "Notifications",
+            "pages": [
+              "api/notifications/rules",
+              "api/notifications/providers"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Advanced",
+        "groups": [
+          {
+            "group": "Self-Hosting",
+            "pages": [
+              "advanced/self-hosting/overview",
+              "advanced/self-hosting/deployment",
+              "advanced/self-hosting/configuration",
+              "advanced/self-hosting/database"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "advanced/development/setup",
+              "advanced/development/architecture",
+              "advanced/development/testing",
+              "advanced/development/contributing"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Smart LLM routing with 23-dimension scoring algorithm",
+    "Real-time cost and token tracking dashboard",
+    "OpenTelemetry native (OTLP traces, metrics, logs)",
+    "Multi-provider support (300+ models across 12+ providers)",
+    "Local-first mode with embedded server",
+    "Cloud mode with secure blind proxy",
+    "Alert rules and notifications",
+    "OpenClaw plugin integration",
+    "Multi-agent workspace management",
+    "Model pricing database and sync"
+  ],
+  "publicApiSurface": [
+    "POST /api/v1/telemetry",
+    "GET /api/v1/overview",
+    "GET /api/v1/tokens",
+    "GET /api/v1/costs",
+    "GET /api/v1/messages",
+    "GET /api/v1/agents",
+    "POST /api/v1/agents",
+    "DELETE /api/v1/agents/:name",
+    "GET /api/v1/agents/:name/key",
+    "POST /api/v1/agents/:name/rotate-key",
+    "POST /api/v1/routing/resolve",
+    "POST /v1/chat/completions",
+    "POST /otlp/v1/traces",
+    "POST /otlp/v1/metrics",
+    "POST /otlp/v1/logs",
+    "GET/POST/PATCH/DELETE /api/v1/notifications",
+    "GET/POST/PUT/DELETE /api/v1/routing/*"
+  ]
+}
