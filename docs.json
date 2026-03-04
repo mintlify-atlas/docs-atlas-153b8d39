@@ -90,6 +90,7 @@
               "api/agents/create",
               "api/agents/get-key",
               "api/agents/rotate-key",
+              "api/agents/rename",
               "api/agents/delete"
             ]
           },

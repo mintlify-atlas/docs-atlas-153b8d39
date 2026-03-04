@@ -1,0 +1,85 @@
+---
+title: Rename Agent
+description: Update an agent's name
+---
+
+## PATCH /api/v1/agents/:agentName
+
+Renames an existing agent. The new name is slugified for the agent ID while preserving the display name.
+
+## Path Parameters
+
+<ParamField path="agentName" type="string" required>
+  Current slug name of the agent to rename
+</ParamField>
+
+## Request Body
+
+<ParamField body="name" type="string" required>
+  New display name for the agent. Will be slugified for the internal ID while preserving the full name for display.
+</ParamField>
+
+## Response
+
+<ResponseField name="renamed" type="boolean">
+  Always `true` on success
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  The new slugified agent name (internal ID)
+</ResponseField>
+
+<ResponseField name="display_name" type="string">
+  The new display name (preserves original formatting)
+</ResponseField>
+
+## Example
+
+```bash cURL
+curl -X PATCH https://app.manifest.build/api/v1/agents/my-agent \
+  -H "Content-Type: application/json" \
+  -H "Cookie: session=..." \
+  -d '{
+    "name": "Production Agent"
+  }'
+```
+
+```json Response
+{
+  "renamed": true,
+  "name": "production-agent",
+  "display_name": "Production Agent"
+}
+```
+
+## Error Responses
+
+<ResponseField name="400 Bad Request">
+  Agent name produces an empty slug or agent does not exist
+</ResponseField>
+
+<ResponseField name="401 Unauthorized">
+  Missing or invalid session cookie
+</ResponseField>
+
+<ResponseField name="409 Conflict">
+  An agent with the new name already exists for this tenant
+</ResponseField>
+
+## Notes
+
+- The agent name is slugified (lowercased, spaces to hyphens, special characters removed)
+- The original display name is preserved for UI purposes
+- All existing messages, API keys, and routing configs remain associated with the agent
+- Renaming is an idempotent operation - renaming to the same name succeeds
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="List Agents" icon="list" href="/api/agents/list">
+    Get all agents with usage statistics
+  </Card>
+  <Card title="Delete Agent" icon="trash" href="/api/agents/delete">
+    Permanently delete an agent
+  </Card>
+</CardGroup>
